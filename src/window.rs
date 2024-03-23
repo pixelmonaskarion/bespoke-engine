@@ -1,7 +1,9 @@
+use std::time::SystemTime;
+
 use cgmath::Vector2;
 use wgpu::{Backends, Device, InstanceDescriptor, Queue, RenderPass, SurfaceConfiguration};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use winit::event_loop::EventLoop;
@@ -17,6 +19,8 @@ pub struct Surface<'b: 'a, 'a> {
     pub device: Device,
     pub queue: Queue,
     pub size: PhysicalSize<u32>,
+    pub mouse_pos: [f64; 2],
+    pub last_time: SystemTime,
 }
 
 impl <'b: 'a, 'a>Surface<'b, 'a> {
@@ -38,7 +42,10 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::POLYGON_MODE_LINE,
-                required_limits: wgpu::Limits::default(),
+                required_limits: wgpu::Limits {
+                    max_bind_groups: 6,
+                    ..Default::default()
+                },
                 label: None 
             },
             None,
@@ -54,14 +61,25 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
             device,
             queue,
             depth_texture,
+            mouse_pos: [0.0, 0.0],
             size,
+            last_time: SystemTime::now(),
         }
     }
 
-    pub fn run(mut self, mut handler: impl WindowHandler, event_loop: EventLoop<()>) {
+    pub fn run<T>(mut self, mut handler: impl WindowHandler, event_loop: EventLoop<T>) {
         let config = FullWindowConfig::load_defaults(handler.config());
         event_loop.run(move |event, control_flow| {
             match event {
+                Event::DeviceEvent {
+                    event: DeviceEvent::MouseMotion{ delta, },
+                    ..
+                } => {
+                    self.mouse_pos[0] += delta.0;
+                    self.mouse_pos[1] += delta.1;
+                    handler.mouse_motion(&self.device, delta);
+                    handler.mouse_moved(&self.device, PhysicalPosition { x: self.mouse_pos[0], y: self.mouse_pos[1] });
+                }
                 Event::WindowEvent {
                     ref event,
                     window_id,
@@ -79,6 +97,9 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                         } => {
                             control_flow.exit();
                         },
+                        WindowEvent::KeyboardInput { event, .. } => {
+                            handler.input_event(&self.device, event);
+                        }
                         WindowEvent::CursorMoved { position, .. } => {
                             handler.mouse_moved(&self.device, *position);
                         }
@@ -97,6 +118,8 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                             self.surface.configure(&self.device, &self.config);
                         }
                         WindowEvent::RedrawRequested if window_id == self.window_id => {
+                            let delta = SystemTime::now().duration_since(self.last_time).unwrap().as_nanos() as f64 / 1000000.0;
+                            self.last_time = SystemTime::now();
                             let output = self.surface.get_current_texture().unwrap();
                             let view = output
                                 .texture
@@ -128,7 +151,7 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                                         stencil_ops: None,
                                     }),
                                 });
-                                handler.render(&self.device, &mut render_pass);
+                                handler.render(&self.device, &mut render_pass, delta);
                             }
                             self.queue.submit([encoder.finish()]);
 
@@ -147,9 +170,11 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
 
 pub trait WindowHandler {
     fn resize(&mut self, device: &Device, new_size: Vector2<u32>);
-    fn render<'a: 'b, 'b>(&'a mut self, device: &Device, render_pass: & mut RenderPass<'b>);
+    fn render<'a: 'b, 'b>(&'a mut self, device: &Device, render_pass: & mut RenderPass<'b>, delta: f64);
     fn config(&self) -> WindowConfig;
     fn mouse_moved(&mut self, device: &Device, mouse_pos: PhysicalPosition<f64>);
+    fn mouse_motion(&mut self, device: &Device, mouse_delta: (f64, f64));
+    fn input_event(&mut self, device: &Device, input_event: &KeyEvent);
 }
 
 pub struct WindowConfig {
