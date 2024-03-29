@@ -56,6 +56,24 @@ impl Model {
         }
     }
 
+    pub fn new_vertex_buffer<I: IndexFormatType + bytemuck::Pod>(vertex_buffer: Buffer, num_vertices: u32, indices: &[I], device: & dyn DeviceExt) -> Self {
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let num_indices = indices.len() as u32;
+        Model {
+            vertex_buffer,
+            index_buffer,
+            instance_buffer: None,
+            num_indices,
+            num_vertices,
+            num_instances: 1,
+            index_format: I::get_index_format(),
+        }
+    }
+
     fn buffers(vertices: &[u8], indices: &[u8], device: &dyn DeviceExt) -> [Buffer; 2] {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),

@@ -10,6 +10,8 @@ anyhow = "1.0.80"
 bytemuck = "1.14.3"
 cgmath = "0.18.0"
 image = "0.25.0"
+log = "0.4.21"
+pollster = "0.3.0"
 wgpu = "0.19.1"
 
 [target.'cfg(target_os = "android")'.dependencies]

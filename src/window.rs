@@ -3,21 +3,26 @@ use std::time::SystemTime;
 use cgmath::Vector2;
 use wgpu::{Backends, Device, InstanceDescriptor, Queue, RenderPass, SurfaceConfiguration};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, Touch, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use winit::event_loop::EventLoop;
 
 use crate::texture::DepthTexture;
 
-pub struct Surface<'b: 'a, 'a> {
-    window_id: WindowId,
-    pub window: &'b Window,
+pub struct SurfaceContext<'a> {
+    pub surface: wgpu::Surface<'a>,
     pub config: SurfaceConfiguration,
-    surface: wgpu::Surface<'a>,
     pub depth_texture: DepthTexture,
     pub device: Device,
     pub queue: Queue,
+}
+
+pub struct Surface<'b: 'a, 'a> {
+    window_id: WindowId,
+    pub window: &'b Window,
+    pub instance: wgpu::Instance,
+    surface_context: Option<SurfaceContext<'a>>,
     pub size: PhysicalSize<u32>,
     pub mouse_pos: [f64; 2],
     pub last_time: SystemTime,
@@ -31,54 +36,35 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
             backends: Backends::all(),
             ..Default::default()
         });
-        let surface = instance.create_surface(window).unwrap();
-        let adapter = instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            },
-        ).await.unwrap();
-        let (device, queue) = adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::POLYGON_MODE_LINE,
-                required_limits: wgpu::Limits {
-                    max_bind_groups: 6,
-                    ..Default::default()
-                },
-                label: None 
-            },
-            None,
-        ).await.unwrap();
-        let config = surface.get_default_config(&adapter, size.width, size.height).unwrap();
-        surface.configure(&device, &config);
-        let depth_texture = DepthTexture::create_depth_texture(&device, &config, "Depth Texture");
         return Self {
             window_id,
             window,
-            config,
-            surface,
-            device,
-            queue,
-            depth_texture,
+            instance,
+            surface_context: None,
             mouse_pos: [0.0, 0.0],
             size,
             last_time: SystemTime::now(),
         }
     }
 
-    pub fn run<T>(mut self, mut handler: impl WindowHandler, event_loop: EventLoop<T>) {
-        let config = FullWindowConfig::load_defaults(handler.config());
+    pub fn run<T, H: WindowHandler>(mut self, event_loop: EventLoop<T>, ready: &dyn Fn(&SurfaceContext) -> H) {
+        let mut handler: Option<H> = None;
         event_loop.run(move |event, control_flow| {
             match event {
-                Event::DeviceEvent {
-                    event: DeviceEvent::MouseMotion{ delta, },
-                    ..
-                } => {
-                    self.mouse_pos[0] += delta.0;
-                    self.mouse_pos[1] += delta.1;
-                    handler.mouse_motion(&self.device, delta);
-                    handler.mouse_moved(&self.device, PhysicalPosition { x: self.mouse_pos[0], y: self.mouse_pos[1] });
+                Event::DeviceEvent { event,  ..} => {
+                    match event {
+                        DeviceEvent::MouseMotion { delta } => {
+                            self.mouse_pos[0] += delta.0;
+                            self.mouse_pos[1] += delta.1;
+                            if let Some(surface_context) = &self.surface_context {
+                                if let Some(handler) = &mut handler {
+                                    handler.mouse_motion(&surface_context.device, delta);
+                                    handler.mouse_moved(&surface_context.device, PhysicalPosition { x: self.mouse_pos[0], y: self.mouse_pos[1] });
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 Event::WindowEvent {
                     ref event,
@@ -98,69 +84,141 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                             control_flow.exit();
                         },
                         WindowEvent::KeyboardInput { event, .. } => {
-                            handler.input_event(&self.device, event);
+                            if let Some(surface_context) = &self.surface_context {
+                                if let Some(handler) = &mut handler {
+                                    handler.input_event(&surface_context.device, event);
+                                }
+                            }
                         }
                         WindowEvent::CursorMoved { position, .. } => {
-                            handler.mouse_moved(&self.device, *position);
+                            if let Some(surface_context) = &self.surface_context {
+                                if let Some(handler) = &mut handler {
+                                    handler.mouse_moved(&surface_context.device, *position);
+                                }
+                            }
+                        }
+                        WindowEvent::Touch(touch) => {
+                            if let Some(surface_context) = &mut self.surface_context {
+                                if let Some(handler) = &mut handler {
+                                    handler.touch(&surface_context.device, touch);
+                                }
+                            }
                         }
                         WindowEvent::Resized(physical_size) => {
-                            self.config.width = physical_size.width;
-                            self.config.height = physical_size.height;
-                            handler.resize(&self.device, Vector2::new(self.config.width, self.config.height));
-                            self.surface.configure(&self.device, &self.config);
-                            self.depth_texture = DepthTexture::create_depth_texture(&self.device, &self.config, "Depth Texture");
+                            if let Some(surface_context) = &mut self.surface_context {
+                                surface_context.config.width = physical_size.width;
+                                surface_context.config.height = physical_size.height;
+                                if let Some(handler) = &mut handler {
+                                    handler.resize(&surface_context.device, Vector2::new(surface_context.config.width, surface_context.config.height));
+                                }
+                                surface_context.surface.configure(&surface_context.device, &surface_context.config);
+                                surface_context.depth_texture = DepthTexture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
+                            }
                         }
                         WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                            self.config.width = (self.config.width as f64**scale_factor) as u32;
-                            self.config.height = (self.config.height as f64**scale_factor) as u32;
-                            handler.resize(&self.device, Vector2::new(self.config.width, self.config.height));
-                            self.depth_texture = DepthTexture::create_depth_texture(&self.device, &self.config, "Depth Texture");
-                            self.surface.configure(&self.device, &self.config);
+                            if let Some(surface_context) = &mut self.surface_context {
+                                surface_context.config.width = (surface_context.config.width as f64**scale_factor) as u32;
+                                surface_context.config.height = (surface_context.config.height as f64**scale_factor) as u32;
+                                if let Some(handler) = &mut handler {
+                                    handler.resize(&surface_context.device, Vector2::new(surface_context.config.width, surface_context.config.height));
+                                }
+                                surface_context.depth_texture = DepthTexture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
+                                surface_context.surface.configure(&surface_context.device, &surface_context.config);
+                        }
                         }
                         WindowEvent::RedrawRequested if window_id == self.window_id => {
-                            let delta = SystemTime::now().duration_since(self.last_time).unwrap().as_nanos() as f64 / 1000000.0;
-                            self.last_time = SystemTime::now();
-                            let output = self.surface.get_current_texture().unwrap();
-                            let view = output
-                                .texture
-                                .create_view(&wgpu::TextureViewDescriptor::default());
-                            let mut encoder = self
-                                .device
-                                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                    label: Some("Render Encoder"),
-                                });
-                            {
-                                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                    label: Some("Render Pass"),
-                                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                        view: &view,
-                                        resolve_target: None,
-                                        ops: wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(config.background_color),
-                                            store: wgpu::StoreOp::Store,
-                                        },
-                                    })],
-                                    timestamp_writes: None,
-                                    occlusion_query_set: None,
-                                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                        view: &self.depth_texture.view,
-                                        depth_ops: Some(wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(1.0),
-                                            store: wgpu::StoreOp::Store,
+                            if let Some(surface_context) = &self.surface_context {
+                                let delta = SystemTime::now().duration_since(self.last_time).unwrap().as_nanos() as f64 / 1000000.0;
+                                self.last_time = SystemTime::now();
+                                let output = surface_context.surface.get_current_texture().unwrap();
+                                let view = output
+                                    .texture
+                                    .create_view(&wgpu::TextureViewDescriptor::default());
+                                let mut encoder = surface_context
+                                    .device
+                                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                        label: Some("Render Encoder"),
+                                    });
+                                {
+                                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                        label: Some("Render Pass"),
+                                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                            view: &view,
+                                            resolve_target: None,
+                                            ops: wgpu::Operations {
+                                                load: wgpu::LoadOp::Clear(FullWindowConfig::load_defaults(handler.as_ref().map(|handler| handler.config())).background_color),
+                                                store: wgpu::StoreOp::Store,
+                                            },
+                                        })],
+                                        timestamp_writes: None,
+                                        occlusion_query_set: None,
+                                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                                            view: &surface_context.depth_texture.view,
+                                            depth_ops: Some(wgpu::Operations {
+                                                load: wgpu::LoadOp::Clear(1.0),
+                                                store: wgpu::StoreOp::Store,
+                                            }),
+                                            stencil_ops: None,
                                         }),
-                                        stencil_ops: None,
-                                    }),
-                                });
-                                handler.render(&self.device, &mut render_pass, delta);
+                                    });
+                                    if let Some(handler) = &mut handler {
+                                        handler.render(&surface_context.device, &mut render_pass, delta);
+                                    }
+                                }
+                                surface_context.queue.submit([encoder.finish()]);
+
+                                output.present();
+
+                                self.window.request_redraw();
                             }
-                            self.queue.submit([encoder.finish()]);
-
-                            output.present();
-
-                            self.window.request_redraw();
                         }
                         _ => {}
                     }
+                }
+                Event::Resumed => {
+                    pollster::block_on(async {
+                        self.size = self.window.inner_size();
+                        if self.window.inner_size() == (PhysicalSize { width: 0, height: 0 }) {
+                            return;
+                        }
+                        let surface = self.instance.create_surface(self.window).unwrap();
+                        let adapter = self.instance.request_adapter(
+                            &wgpu::RequestAdapterOptions {
+                                power_preference: wgpu::PowerPreference::default(),
+                                compatible_surface: Some(&surface),
+                                force_fallback_adapter: false,
+                            },
+                        ).await.unwrap();
+                        let (device, queue) = adapter.request_device(
+                            &wgpu::DeviceDescriptor {
+                                required_features: wgpu::Features::VERTEX_WRITABLE_STORAGE | wgpu::Features::POLYGON_MODE_LINE,
+                                required_limits: wgpu::Limits {
+                                    max_bind_groups: 6,
+                                    max_texture_dimension_2d: 16384,
+                                    max_buffer_size: 84934656,
+                                    max_uniform_buffer_binding_size: 84934656,
+                                    ..Default::default()
+                                },
+                                label: None 
+                            },
+                            None,
+                        ).await.unwrap();
+                        let config = surface.get_default_config(&adapter, self.size.width, self.size.height).unwrap();
+                        surface.configure(&device, &config);
+                        let depth_texture = DepthTexture::create_depth_texture(&device, &config, "Depth Texture");
+                        self.surface_context = Some(SurfaceContext {
+                            surface,
+                            config,
+                            depth_texture,
+                            device,
+                            queue
+                        });
+                        handler = Some(ready(self.surface_context.as_ref().unwrap()));
+                    });
+                }
+                Event::Suspended => {
+                    log::error!("help");
+                    println!("suspended!");
                 }
                 _ => {}
             }
@@ -175,6 +233,7 @@ pub trait WindowHandler {
     fn mouse_moved(&mut self, device: &Device, mouse_pos: PhysicalPosition<f64>);
     fn mouse_motion(&mut self, device: &Device, mouse_delta: (f64, f64));
     fn input_event(&mut self, device: &Device, input_event: &KeyEvent);
+    fn touch(&mut self, device: &Device, touch: &Touch);
 }
 
 pub struct WindowConfig {
@@ -186,9 +245,9 @@ struct FullWindowConfig {
 }
 
 impl FullWindowConfig {
-    fn load_defaults(config: WindowConfig) -> Self {
+    fn load_defaults(config: Option<WindowConfig>) -> Self {
         Self {
-            background_color: config.background_color.unwrap_or(wgpu::Color {
+            background_color: config.map(|c| c.background_color).flatten().unwrap_or(wgpu::Color {
                 r: 0.1,
                 g: 0.2,
                 b: 0.3,

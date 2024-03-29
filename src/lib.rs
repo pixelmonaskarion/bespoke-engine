@@ -4,3 +4,4 @@ pub mod shader;
 pub mod texture;
 pub mod window;
 pub mod camera;
+pub mod compute;
