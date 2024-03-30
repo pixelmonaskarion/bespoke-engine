@@ -191,12 +191,10 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                         ).await.unwrap();
                         let (device, queue) = adapter.request_device(
                             &wgpu::DeviceDescriptor {
-                                required_features: wgpu::Features::VERTEX_WRITABLE_STORAGE | wgpu::Features::POLYGON_MODE_LINE,
+                                required_features: wgpu::Features::empty(), //Android doesn't support vertex writable storage, not sure what I'm going to do now :/
                                 required_limits: wgpu::Limits {
-                                    max_bind_groups: 6,
+                                    max_bind_groups: 4,
                                     max_texture_dimension_2d: 16384,
-                                    max_buffer_size: 84934656,
-                                    max_uniform_buffer_binding_size: 84934656,
                                     ..Default::default()
                                 },
                                 label: None 

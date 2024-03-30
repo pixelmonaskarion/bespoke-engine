@@ -124,6 +124,11 @@ impl Texture {
         
         Ok(Self { texture, view, sampler, layout, binding })
     }
+
+    pub fn normalized_dimensions(&self) -> (f32, f32) {
+        let dist = ((self.texture.width() as f32).powf(2.0)+(self.texture.height() as f32).powf(2.0)).sqrt();
+        (self.texture.width() as f32/dist, self.texture.height() as f32/dist)
+    }
 }
 
 pub struct DepthTexture {

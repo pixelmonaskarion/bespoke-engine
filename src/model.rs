@@ -87,6 +87,17 @@ impl Model {
         });
         [vertex_buffer, index_buffer]
     }
+
+    pub fn update_instances(&mut self, instances: Vec<impl ToRaw>, device: & dyn DeviceExt) {
+        self.instance_buffer = Some(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Instance Buffer"),
+                contents: &instances.iter().map(|instance| instance.to_raw()).collect::<Vec<_>>().concat(),
+                usage: wgpu::BufferUsages::VERTEX,
+            }
+        ));
+        self.num_instances = instances.len() as u32;
+    }
 }
 
 pub trait IndexFormatType {

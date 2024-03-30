@@ -1,4 +1,4 @@
-use cgmath::Vector3;
+use cgmath::{Point3, Vector3};
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
@@ -9,7 +9,7 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
 );
 
 pub struct Camera {
-        pub eye: cgmath::Point3<f32>,
+        pub eye: cgmath::Vector3<f32>,
         pub aspect: f32,
         pub fovy: f32,
         pub znear: f32,
@@ -21,7 +21,7 @@ pub struct Camera {
 
 impl Camera {
     pub fn build_view_projection_matrix(&self) -> [[f32; 4]; 4] {
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.eye+self.get_forward_vec(), Vector3::unit_y());
+        let view = cgmath::Matrix4::look_at_rh(vec_to_point(self.eye), vec_to_point(self.eye+self.get_forward_vec()), Vector3::unit_y());
         let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
         return (OPENGL_TO_WGPU_MATRIX * proj * view).into();
     }
@@ -37,4 +37,8 @@ impl Camera {
     pub fn get_right_vec(&self) -> Vector3<f32> {
         cgmath::Vector3::new(self.ground.cos(), 0.0, self.ground.sin()).cross(Vector3::unit_y())
     }
+}
+
+pub fn vec_to_point<T>(vec: Vector3<T>) -> Point3<T> {
+    Point3::new(vec.x, vec.y, vec.z)
 }
