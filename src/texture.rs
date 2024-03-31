@@ -81,7 +81,85 @@ impl Texture {
                 ..Default::default()
             }
         );
-        let layout =
+        let layout = Self::layout(device, sample_type, label);
+        let binding = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    }
+                ],
+                label: Some(&(label.unwrap_or("").to_owned() + " Binding")),
+            }
+        );
+        
+        Ok(Self { texture: texture, view, sampler, layout, binding })
+    }
+
+    pub fn blank_texture(device: &wgpu::Device, width: u32, height: u32, format: wgpu::TextureFormat) -> Self {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(
+            &wgpu::TextureDescriptor {
+                label: Some("Temp Draw Texture"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[format],
+            }
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        //create a uniform binding for that texture
+        let layout = Texture::layout(device, None, None);
+        let sampler = device.create_sampler(
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            }
+        );
+        let binding = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    }
+                ],
+                label: None,
+            }
+        );
+        Self {
+            binding,
+            layout,
+            sampler,
+            texture,
+            view,
+        }
+    }
+
+    pub fn layout(device: &wgpu::Device, sample_type: Option<wgpu::TextureSampleType>, label: Option<&str>) -> BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -104,25 +182,7 @@ impl Texture {
                 },
             ],
             label: Some(&(label.unwrap_or("").to_owned() + " Layout")),
-        });
-        let binding = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                layout: &layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    }
-                ],
-                label: Some(&(label.unwrap_or("").to_owned() + " Binding")),
-            }
-        );
-        
-        Ok(Self { texture, view, sampler, layout, binding })
+        })
     }
 
     pub fn normalized_dimensions(&self) -> (f32, f32) {

@@ -1,5 +1,6 @@
 use std::time::SystemTime;
 
+use bytemuck::{bytes_of, NoUninit};
 use cgmath::Vector2;
 use wgpu::{Backends, Device, InstanceDescriptor, Queue, RenderPass, SurfaceConfiguration};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -8,7 +9,10 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use winit::event_loop::EventLoop;
 
-use crate::texture::DepthTexture;
+use crate::binding::Descriptor;
+use crate::model::{Model, Render, ToRaw};
+use crate::shader::Shader;
+use crate::texture::{DepthTexture, Texture};
 
 pub struct SurfaceContext<'a> {
     pub surface: wgpu::Surface<'a>,
@@ -16,6 +20,8 @@ pub struct SurfaceContext<'a> {
     pub depth_texture: DepthTexture,
     pub device: Device,
     pub queue: Queue,
+    pub screen_model: Model,
+    pub texture_renderer_shader: Shader,
 }
 
 pub struct Surface<'b: 'a, 'a> {
@@ -130,6 +136,7 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                             if let Some(surface_context) = &self.surface_context {
                                 let delta = SystemTime::now().duration_since(self.last_time).unwrap().as_nanos() as f64 / 1000000.0;
                                 self.last_time = SystemTime::now();
+                                let temp_texture = Texture::blank_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, surface_context.config.format);
                                 let output = surface_context.surface.get_current_texture().unwrap();
                                 let view = output
                                     .texture
@@ -139,11 +146,12 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                         label: Some("Render Encoder"),
                                     });
+                                //render the game to a temporary texture
                                 {
                                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                        label: Some("Render Pass"),
+                                        label: Some("Temp Render Pass"),
                                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                            view: &view,
+                                            view: &temp_texture.view,
                                             resolve_target: None,
                                             ops: wgpu::Operations {
                                                 load: wgpu::LoadOp::Clear(FullWindowConfig::load_defaults(handler.as_ref().map(|handler| handler.config())).background_color),
@@ -164,6 +172,62 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                                     if let Some(handler) = &mut handler {
                                         handler.render(&surface_context.device, &mut render_pass, delta);
                                     }
+                                }
+                                //create another temporary texture and use it to render post processing effects
+                                let post_process_texture = Texture::blank_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, surface_context.config.format);
+                                {
+                                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                        label: Some("Post Processing Render Pass"),
+                                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                            view: &post_process_texture.view,
+                                            resolve_target: None,
+                                            ops: wgpu::Operations {
+                                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                                store: wgpu::StoreOp::Store,
+                                            },
+                                        })],
+                                        timestamp_writes: None,
+                                        occlusion_query_set: None,
+                                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                                            view: &surface_context.depth_texture.view,
+                                            depth_ops: Some(wgpu::Operations {
+                                                load: wgpu::LoadOp::Clear(1.0),
+                                                store: wgpu::StoreOp::Store,
+                                            }),
+                                            stencil_ops: None,
+                                        }),
+                                    });
+                                    if let Some(handler) = &mut handler {
+                                        handler.post_process_render(&surface_context.device, &mut render_pass, &surface_context.screen_model, &temp_texture);
+                                    }
+                                }
+                                //render that texture onto the screen
+                                {
+                                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                        label: Some("Surface Render Pass"),
+                                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                            view: &view,
+                                            resolve_target: None,
+                                            ops: wgpu::Operations {
+                                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                                store: wgpu::StoreOp::Store,
+                                            },
+                                        })],
+                                        timestamp_writes: None,
+                                        occlusion_query_set: None,
+                                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                                            view: &surface_context.depth_texture.view,
+                                            depth_ops: Some(wgpu::Operations {
+                                                load: wgpu::LoadOp::Clear(1.0),
+                                                store: wgpu::StoreOp::Store,
+                                            }),
+                                            stencil_ops: None,
+                                        }),
+                                    });
+                                    render_pass.set_pipeline(&surface_context.texture_renderer_shader.pipeline);
+                                    render_pass.set_bind_group(0, &post_process_texture.binding, &[]);
+
+                                    surface_context.screen_model.render(&mut render_pass);
                                 }
                                 surface_context.queue.submit([encoder.finish()]);
 
@@ -204,12 +268,16 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                         let config = surface.get_default_config(&adapter, self.size.width, self.size.height).unwrap();
                         surface.configure(&device, &config);
                         let depth_texture = DepthTexture::create_depth_texture(&device, &config, "Depth Texture");
+                        let texture_renderer_shader = Shader::new(include_str!("screen_renderer.wgsl"), &device, config.format, &[&Texture::layout(&device, None, None)], &[BasicVertex::desc()], None);
+                        let screen_model = BasicVertex::one_face(&device);
                         self.surface_context = Some(SurfaceContext {
                             surface,
                             config,
                             depth_texture,
                             device,
-                            queue
+                            queue,
+                            screen_model,
+                            texture_renderer_shader,
                         });
                         handler = Some(ready(self.surface_context.as_ref().unwrap()));
                     });
@@ -232,6 +300,7 @@ pub trait WindowHandler {
     fn mouse_motion(&mut self, device: &Device, mouse_delta: (f64, f64));
     fn input_event(&mut self, device: &Device, input_event: &KeyEvent);
     fn touch(&mut self, device: &Device, touch: &Touch);
+    fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, device: &Device, render_pass: & mut RenderPass<'b>, screen_model: &'c Model, surface_texture: &'c Texture);
 }
 
 pub struct WindowConfig {
@@ -252,5 +321,50 @@ impl FullWindowConfig {
                 a: 1.0,
             }),
         }
+    }
+}
+
+#[repr(C)]
+#[derive(NoUninit, Copy, Clone)]
+pub struct BasicVertex {
+    position: [f32; 3],
+    tex_coords: [f32; 2],
+}
+
+impl BasicVertex {
+    pub fn one_face(device: &Device) -> Model {
+        Model::new(vec![
+            Self { position: [-1.0, -1.0, 0.0], tex_coords: [0.0, 1.0] },
+            Self { position: [-1.0, 1.0, 0.0], tex_coords: [0.0, 0.0] },
+            Self { position: [1.0, -1.0, 0.0], tex_coords: [1.0, 1.0] },
+            Self { position: [1.0, 1.0, 0.0], tex_coords: [1.0, 0.0] },
+        ], &[0_u16, 2, 1, 2, 3, 1], device)
+    }
+}
+
+impl Descriptor for BasicVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
+        }
+    }
+}
+
+impl ToRaw for BasicVertex {
+    fn to_raw(&self) -> Vec<u8> {
+        bytes_of(self).to_vec()
     }
 }
