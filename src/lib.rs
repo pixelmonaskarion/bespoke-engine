@@ -5,3 +5,5 @@ pub mod texture;
 pub mod window;
 pub mod camera;
 pub mod compute;
+pub mod mesh;
+pub mod resource_loader;

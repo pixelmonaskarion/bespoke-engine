@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use wgpu::{util::DeviceExt, Buffer, IndexFormat, RenderPass};
 
 #[derive(Debug)]
@@ -125,6 +127,13 @@ impl Render for Model {
         render_pass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
         render_pass.draw_indexed(0..self.num_indices, 0, 0..self.num_instances);
     }
+    
+    fn render_instances<'a: 'b, 'c: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instances: &'c Buffer, range: Range<u32>) {
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, instances.slice(..));
+        render_pass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
+        render_pass.draw_indexed(0..self.num_indices, 0, range);
+    }
 }
 
 pub trait ToRaw {
@@ -133,4 +142,5 @@ pub trait ToRaw {
 
 pub trait Render {
     fn render<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>);
+    fn render_instances<'a: 'b, 'c: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instances: &'c Buffer, range: Range<u32>);
 }
