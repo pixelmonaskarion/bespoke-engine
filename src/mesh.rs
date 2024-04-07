@@ -54,7 +54,7 @@ impl MeshModel {
         name: Option<String>,
         source_path: &Path,
         load_resource_string: impl Fn(&str) -> Option<String>,
-        load_resource: impl Fn(&str) -> Option<Vec<u8>>,
+        load_resource: impl Fn(&str) -> Option<&&[u8]>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
@@ -88,7 +88,7 @@ impl MeshModel {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                        resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler.as_ref().unwrap()),
                     },
                     ],
                     label: None,
@@ -148,7 +148,7 @@ impl MeshModel {
     
 pub fn load_texture(
     file_name: &str,
-    load_resource: impl Fn(&str) -> Option<Vec<u8>>,
+    load_resource: impl Fn(&str) -> Option<&&[u8]>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> anyhow::Result<Texture> {

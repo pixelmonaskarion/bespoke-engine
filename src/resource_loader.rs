@@ -30,12 +30,18 @@ pub fn generate_resources(res_dir: &Path) {
     )
     .unwrap();
     write!(&mut file, r#";
-pub fn load_resource(path: &str) -> Option<Vec<u8>> {{
-    RESOURCES.get(path).map(|res| res.to_vec())
+pub fn load_resource(path: &str) -> Option<&&[u8]> {{
+    println!("loading resource: {{path}}");
+    RESOURCES.get(path)
+}}
+
+pub fn load_resource_vec(path: &str) -> Option<Vec<u8>> {{
+    println!("loading resource: {{path}}");
+    RESOURCES.get(path).map(|res| {{ res.to_vec() }})
 }}
 
 pub fn load_resource_string(path: &str) -> Option<String> {{
-    load_resource(path).map(|res| String::from_utf8(res).ok()).flatten()
+    load_resource(path).map(|res| String::from_utf8(res.to_vec()).ok()).flatten()
 }}"#).unwrap();
 }
 

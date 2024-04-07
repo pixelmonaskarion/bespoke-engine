@@ -26,12 +26,12 @@ impl ComputeShader {
         }
     }
 
-    pub fn run(&self, bind_groups: &[BindGroup], groups: [u32; 3], device: &Device, queue: &Queue) {
+    pub fn run(&self, bind_groups: &[&BindGroup], groups: [u32; 3], device: &Device, queue: &Queue) {
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut cpass = encoder.begin_compute_pass(&Default::default());
             cpass.set_pipeline(&self.pipeline);
-            for (i, bind_group) in bind_groups.iter().enumerate() {
+            for (i, bind_group) in bind_groups.into_iter().enumerate() {
                 cpass.set_bind_group(i as u32, bind_group, &[]);
             }
             cpass.dispatch_workgroups(groups[0], groups[1], groups[2]);

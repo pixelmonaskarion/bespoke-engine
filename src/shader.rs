@@ -1,6 +1,6 @@
 use wgpu::{Device, PipelineLayout, RenderPipeline, ShaderModule, TextureFormat};
 
-use crate::{binding::Descriptor, texture::DepthTexture, window::BasicVertex};
+use crate::{binding::Descriptor, texture::Texture, window::BasicVertex};
 
 pub struct Shader {
     pub shader: ShaderModule,
@@ -30,7 +30,7 @@ impl Shader {
                 buffers: vertex_buffers,
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: DepthTexture::DEPTH_FORMAT,
+                format: Texture::DEPTH_FORMAT,
                 depth_write_enabled: full_config.background,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
@@ -94,13 +94,14 @@ impl Shader {
                 entry_point: "vs_main",
                 buffers: &[BasicVertex::desc()],
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DepthTexture::DEPTH_FORMAT,
-                depth_write_enabled: full_config.background,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
+            // depth_stencil: Some(wgpu::DepthStencilState {
+            //     format: DepthTexture::DEPTH_FORMAT,
+            //     depth_write_enabled: full_config.background,
+            //     depth_compare: wgpu::CompareFunction::Less,
+            //     stencil: wgpu::StencilState::default(),
+            //     bias: wgpu::DepthBiasState::default(),
+            // }),
+            depth_stencil: None,
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",

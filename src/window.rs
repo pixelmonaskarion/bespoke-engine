@@ -12,12 +12,12 @@ use winit::event_loop::EventLoop;
 use crate::binding::Descriptor;
 use crate::model::{Model, Render, ToRaw};
 use crate::shader::Shader;
-use crate::texture::{DepthTexture, Texture};
+use crate::texture::Texture;
 
 pub struct SurfaceContext<'a> {
     pub surface: wgpu::Surface<'a>,
     pub config: SurfaceConfiguration,
-    pub depth_texture: DepthTexture,
+    pub depth_texture: Texture,
     pub device: Device,
     pub queue: Queue,
     pub screen_model: Model,
@@ -115,10 +115,10 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                                 surface_context.config.width = physical_size.width;
                                 surface_context.config.height = physical_size.height;
                                 if let Some(handler) = &mut handler {
-                                    handler.resize(&surface_context.device, Vector2::new(surface_context.config.width, surface_context.config.height));
+                                    handler.resize(&surface_context.device, &surface_context.queue, Vector2::new(surface_context.config.width, surface_context.config.height));
                                 }
                                 surface_context.surface.configure(&surface_context.device, &surface_context.config);
-                                surface_context.depth_texture = DepthTexture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
+                                surface_context.depth_texture = Texture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
                             }
                         }
                         WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -126,9 +126,9 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                                 surface_context.config.width = (surface_context.config.width as f64**scale_factor) as u32;
                                 surface_context.config.height = (surface_context.config.height as f64**scale_factor) as u32;
                                 if let Some(handler) = &mut handler {
-                                    handler.resize(&surface_context.device, Vector2::new(surface_context.config.width, surface_context.config.height));
+                                    handler.resize(&surface_context.device, &surface_context.queue, Vector2::new(surface_context.config.width, surface_context.config.height));
                                 }
-                                surface_context.depth_texture = DepthTexture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
+                                surface_context.depth_texture = Texture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
                                 surface_context.surface.configure(&surface_context.device, &surface_context.config);
                         }
                         }
@@ -170,7 +170,7 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                                         }),
                                     });
                                     if let Some(handler) = &mut handler {
-                                        handler.render(&surface_context.device, &mut render_pass, delta);
+                                        handler.render(&surface_context.device, &surface_context.queue, &mut render_pass, delta);
                                     }
                                 }
                                 //create another temporary texture and use it to render post processing effects
@@ -188,17 +188,18 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                                         })],
                                         timestamp_writes: None,
                                         occlusion_query_set: None,
-                                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                            view: &surface_context.depth_texture.view,
-                                            depth_ops: Some(wgpu::Operations {
-                                                load: wgpu::LoadOp::Clear(1.0),
-                                                store: wgpu::StoreOp::Store,
-                                            }),
-                                            stencil_ops: None,
-                                        }),
+                                        // depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                                        //     view: &surface_context.depth_texture.view,
+                                        //     depth_ops: Some(wgpu::Operations {
+                                        //         load: wgpu::LoadOp::Clear(1.0),
+                                        //         store: wgpu::StoreOp::Store,
+                                        //     }),
+                                        //     stencil_ops: None,
+                                        // }),
+                                        depth_stencil_attachment: None,
                                     });
                                     if let Some(handler) = &mut handler {
-                                        handler.post_process_render(&surface_context.device, &mut render_pass, &surface_context.screen_model, &temp_texture);
+                                        handler.post_process_render(&surface_context.device, &surface_context.queue, &mut render_pass, &surface_context.screen_model, &temp_texture, &surface_context.depth_texture);
                                     }
                                 }
                                 //render that texture onto the screen
@@ -255,7 +256,7 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                         ).await.unwrap();
                         let (device, queue) = adapter.request_device(
                             &wgpu::DeviceDescriptor {
-                                required_features: wgpu::Features::empty(), //Android doesn't support vertex writable storage, not sure what I'm going to do now :/
+                                required_features: wgpu::Features::empty(),
                                 required_limits: wgpu::Limits {
                                     max_bind_groups: 4,
                                     max_texture_dimension_2d: 16384,
@@ -267,7 +268,7 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
                         ).await.unwrap();
                         let config = surface.get_default_config(&adapter, self.size.width, self.size.height).unwrap();
                         surface.configure(&device, &config);
-                        let depth_texture = DepthTexture::create_depth_texture(&device, &config, "Depth Texture");
+                        let depth_texture = Texture::create_depth_texture(&device, &config, "Depth Texture");
                         let texture_renderer_shader = Shader::new(include_str!("screen_renderer.wgsl"), &device, config.format, &[&Texture::layout(&device, None, None)], &[BasicVertex::desc()], None);
                         let screen_model = BasicVertex::one_face(&device);
                         self.surface_context = Some(SurfaceContext {
@@ -293,14 +294,14 @@ impl <'b: 'a, 'a>Surface<'b, 'a> {
 }
 
 pub trait WindowHandler {
-    fn resize(&mut self, device: &Device, new_size: Vector2<u32>);
-    fn render<'a: 'b, 'b>(&'a mut self, device: &Device, render_pass: & mut RenderPass<'b>, delta: f64);
+    fn resize(&mut self, device: &Device, queue: &Queue, new_size: Vector2<u32>);
+    fn render<'a: 'b, 'b>(&'a mut self, device: &Device, queue: &Queue, render_pass: & mut RenderPass<'b>, delta: f64);
     fn config(&self) -> WindowConfig;
     fn mouse_moved(&mut self, device: &Device, mouse_pos: PhysicalPosition<f64>);
     fn mouse_motion(&mut self, device: &Device, mouse_delta: (f64, f64));
     fn input_event(&mut self, device: &Device, input_event: &KeyEvent);
     fn touch(&mut self, device: &Device, touch: &Touch);
-    fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, device: &Device, render_pass: & mut RenderPass<'b>, screen_model: &'c Model, surface_texture: &'c Texture);
+    fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, device: &Device, queue: &Queue, render_pass: & mut RenderPass<'b>, screen_model: &'c Model, surface_texture: &'c Texture, depth_texture: &'c Texture);
 }
 
 pub struct WindowConfig {
