@@ -1,6 +1,6 @@
-use wgpu::{Device, PipelineLayout, RenderPipeline, ShaderModule, TextureFormat};
+use wgpu::{BindGroupLayout, Device, PipelineCompilationOptions, PipelineLayout, RenderPass, RenderPipeline, ShaderModule, TextureFormat};
 
-use crate::{binding::Descriptor, texture::Texture, window::BasicVertex};
+use crate::{binding::Descriptor, texture::DepthTexture, window::BasicVertex};
 
 pub struct Shader {
     pub shader: ShaderModule,
@@ -9,7 +9,7 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn new(source: &str, device: &Device, format: TextureFormat, bindings: &[&wgpu::BindGroupLayout], vertex_buffers: &[wgpu::VertexBufferLayout<'_>], config: Option<ShaderConfig>) -> Self {
+    pub fn new(source: &str, device: &Device, format: TextureFormat, bindings: Vec<&BindGroupLayout>, vertex_buffers: &[wgpu::VertexBufferLayout<'_>], config: Option<ShaderConfig>) -> Self {
         let full_config = FullShaderConfig::load_defaults(config);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -18,7 +18,7 @@ impl Shader {
         let layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: bindings,
+                bind_group_layouts: &bindings,
                 push_constant_ranges: &[],
             });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -28,9 +28,10 @@ impl Shader {
                 module: &shader,
                 entry_point: "vs_main",
                 buffers: vertex_buffers,
+                compilation_options: PipelineCompilationOptions::default(),
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: Texture::DEPTH_FORMAT,
+                format: DepthTexture::DEPTH_FORMAT,
                 depth_write_enabled: full_config.background,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
@@ -44,6 +45,7 @@ impl Shader {
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -52,7 +54,7 @@ impl Shader {
                 cull_mode: Some(wgpu::Face::Back),
                 // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
                 // or Features::POLYGON_MODE_POINT
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: full_config.line_mode,
                 // Requires Features::DEPTH_CLIP_CONTROL
                 unclipped_depth: false,
                 // Requires Features::CONSERVATIVE_RASTERIZATION
@@ -70,12 +72,12 @@ impl Shader {
         Self {
             shader,
             layout,
-            pipeline
+            pipeline,
         }
     }
 
     pub fn new_post_process(source: &str, device: &Device, format: TextureFormat, bindings: &[&wgpu::BindGroupLayout]) -> Self {
-        let full_config = FullShaderConfig::load_defaults(None);
+        let _full_config = FullShaderConfig::load_defaults(None);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Post Processing Shader"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -93,6 +95,7 @@ impl Shader {
                 module: &shader,
                 entry_point: "vs_main",
                 buffers: &[BasicVertex::desc()],
+                compilation_options: PipelineCompilationOptions::default(),
             },
             // depth_stencil: Some(wgpu::DepthStencilState {
             //     format: DepthTexture::DEPTH_FORMAT,
@@ -110,6 +113,7 @@ impl Shader {
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -139,20 +143,33 @@ impl Shader {
             pipeline
         }
     }
+
+    pub fn bind<'pass, 's: 'pass>(&'s self, render_pass: &mut RenderPass<'pass>) {
+        render_pass.set_pipeline(&self.pipeline);
+    }
 }
 
 pub struct ShaderConfig {
     pub background: Option<bool>,
+    pub line_mode: Option<wgpu::PolygonMode>,
+}
+
+impl Default for ShaderConfig {
+    fn default() -> Self {
+        Self { background: None, line_mode: None }
+    }
 }
 
 struct FullShaderConfig {
     background: bool,
+    line_mode: wgpu::PolygonMode,
 }
 
 impl FullShaderConfig {
     fn load_defaults(config: Option<ShaderConfig>) -> Self {
         Self {
-            background: config.map(|c| c.background).flatten().unwrap_or(true),
+            background: config.as_ref().map(|c| c.background).flatten().unwrap_or(true),
+            line_mode: config.as_ref().map(|c| c.line_mode).flatten().unwrap_or(wgpu::PolygonMode::Fill),
         }
     }
 }

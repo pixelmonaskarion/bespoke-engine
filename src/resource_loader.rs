@@ -31,13 +31,13 @@ pub fn generate_resources(res_dir: &Path) {
     .unwrap();
     write!(&mut file, r#";
 pub fn load_resource(path: &str) -> Option<&&[u8]> {{
-    println!("loading resource: {{path}}");
-    RESOURCES.get(path)
+    println!("loading resource: {{}}", path.replace("\\", "/"));
+    RESOURCES.get(&path.replace("\\", "/"))
 }}
 
 pub fn load_resource_vec(path: &str) -> Option<Vec<u8>> {{
-    println!("loading resource: {{path}}");
-    RESOURCES.get(path).map(|res| {{ res.to_vec() }})
+    println!("loading resource: {{}}", path.replace("\\", "/"));
+    RESOURCES.get(&path.replace("\\", "/")).map(|res| {{ res.to_vec() }})
 }}
 
 pub fn load_resource_string(path: &str) -> Option<String> {{

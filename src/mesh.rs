@@ -40,9 +40,9 @@ impl Render for MeshModel {
         for (i, material) in self.materials.iter().enumerate() {
             render_pass.set_bind_group(i as u32, &material.bind_group, &[]);
         }
+        render_pass.set_vertex_buffer(1, instances.slice(..));
         for mesh in &self.meshes {
             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, instances.slice(..));
             render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..mesh.num_elements, 0, range.clone());
         }
@@ -88,7 +88,7 @@ impl MeshModel {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler.as_ref().unwrap()),
+                        resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
                     },
                     ],
                     label: None,

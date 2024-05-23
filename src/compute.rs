@@ -1,4 +1,4 @@
-use wgpu::{BindGroup, Buffer, ComputePipeline, Device, Queue};
+use wgpu::{BindGroup, Buffer, ComputePipeline, Device, PipelineCompilationOptions, Queue};
 
 pub struct ComputeShader {
     pipeline: ComputePipeline,
@@ -20,6 +20,7 @@ impl ComputeShader {
             layout: Some(&compute_pipeline_layout),
             module: &cs_module,
             entry_point: "main",
+            compilation_options: PipelineCompilationOptions::default(),
         });
         Self {
             pipeline,
