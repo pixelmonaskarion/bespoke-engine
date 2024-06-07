@@ -7,6 +7,7 @@ pub struct Texture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
+    pub size: wgpu::Extent3d,
 }
 
 impl Texture {
@@ -47,7 +48,7 @@ impl Texture {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: format.unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb),
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[format.unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb)],
             }
         );
@@ -81,7 +82,7 @@ impl Texture {
             }
         );
         
-        Ok(Self { texture, view, sampler})
+        Ok(Self { texture, view, sampler, size})
     }
 
     pub fn blank_texture(device: &wgpu::Device, width: u32, height: u32, format: wgpu::TextureFormat) -> Self {
@@ -98,7 +99,7 @@ impl Texture {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[format],
             }
         );
@@ -118,6 +119,7 @@ impl Texture {
             sampler,
             texture,
             view,
+            size,
         }
     }
     

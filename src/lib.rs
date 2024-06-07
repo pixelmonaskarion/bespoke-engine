@@ -9,3 +9,4 @@ pub mod mesh;
 pub mod resource_loader;
 pub mod billboard;
 pub mod instance;
+pub mod surface_context;

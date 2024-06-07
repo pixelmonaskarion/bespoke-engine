@@ -15,6 +15,17 @@ impl Shader {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
+        let depth_stencil = if full_config.enable_depth_texture {
+            Some(wgpu::DepthStencilState {
+                format: DepthTexture::DEPTH_FORMAT,
+                depth_write_enabled: full_config.background,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })
+        } else {
+            None
+        };
         let layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -30,13 +41,7 @@ impl Shader {
                 buffers: vertex_buffers,
                 compilation_options: PipelineCompilationOptions::default(),
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DepthTexture::DEPTH_FORMAT,
-                depth_write_enabled: full_config.background,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
+            depth_stencil,
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
@@ -152,17 +157,19 @@ impl Shader {
 pub struct ShaderConfig {
     pub background: Option<bool>,
     pub line_mode: Option<wgpu::PolygonMode>,
+    pub enable_depth_texture: Option<bool>
 }
 
 impl Default for ShaderConfig {
     fn default() -> Self {
-        Self { background: None, line_mode: None }
+        Self { background: None, line_mode: None, enable_depth_texture: None }
     }
 }
 
 struct FullShaderConfig {
     background: bool,
     line_mode: wgpu::PolygonMode,
+    enable_depth_texture: bool,
 }
 
 impl FullShaderConfig {
@@ -170,6 +177,7 @@ impl FullShaderConfig {
         Self {
             background: config.as_ref().map(|c| c.background).flatten().unwrap_or(true),
             line_mode: config.as_ref().map(|c| c.line_mode).flatten().unwrap_or(wgpu::PolygonMode::Fill),
+            enable_depth_texture: config.as_ref().map(|c| c.enable_depth_texture).flatten().unwrap_or(true),
         }
     }
 }
