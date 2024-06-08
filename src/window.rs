@@ -13,7 +13,7 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::binding::{bind_resources, create_layout, Descriptor, UniformBinding};
 use crate::model::{Model, Render, ToRaw};
-use crate::shader::Shader;
+use crate::shader::{Shader, ShaderConfig};
 use crate::surface_context::{SurfaceContext, SurfaceCtx};
 use crate::texture::{DepthTexture, Texture};
 
@@ -76,9 +76,9 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                 config.format = format;
             }
             surface.configure(&device, &config);
-            let depth_texture = DepthTexture::create_depth_texture(&device, &config, "Depth Texture");
+            let depth_texture = DepthTexture::create_depth_texture(&device, config.width, config.height, "Depth Texture");
             let depth_texture_binding = UniformBinding::new(&device, "Depth Texture", depth_texture, None);
-            let texture_renderer_shader = Shader::new(include_str!("screen_renderer.wgsl"), &device, config.format, vec![&create_layout::<Texture>(&device)], &[BasicVertex::desc()], None);
+            let texture_renderer_shader = Shader::new(include_str!("screen_renderer.wgsl"), &device, config.format, vec![&create_layout::<Texture>(&device)], &[BasicVertex::desc()], ShaderConfig::default());
             let screen_model = BasicVertex::one_face(&device);
             let surface_context = SurfaceContext {
                 window_id: window.id(),
@@ -167,7 +167,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                         handler.resize(surface_context, Vector2::new(surface_context.config.width, surface_context.config.height));
                     }
                     surface_context.surface.configure(&surface_context.device, &surface_context.config);
-                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
+                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture");
                     surface_context.depth_texture.set_data(&surface_context.device, depth_texture);
                 }
             }
@@ -178,7 +178,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                     if let Some(handler) = &mut self.handler {
                         handler.resize(surface_context, Vector2::new(surface_context.config.width, surface_context.config.height));
                     }
-                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, &surface_context.config, "Depth Texture");
+                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture");
                     surface_context.depth_texture.set_data(&surface_context.device, depth_texture);
                     surface_context.surface.configure(&surface_context.device, &surface_context.config);
             }
@@ -351,7 +351,7 @@ pub trait WindowHandler {
     fn mouse_motion(&mut self, surface_context: &dyn SurfaceCtx, mouse_delta: (f64, f64));
     fn input_event(&mut self, surface_context: &dyn SurfaceCtx, input_event: &KeyEvent);
     fn touch(&mut self, surface_context: &dyn SurfaceCtx, touch: &Touch);
-    fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, surface_context: &dyn SurfaceCtx, render_pass: & mut RenderPass<'b>, surface_texture: &'c UniformBinding<Texture>);
+    fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, surface_context: &'c dyn SurfaceCtx, render_pass: & mut RenderPass<'b>, surface_texture: &'c UniformBinding<Texture>);
     fn other_window_event(&mut self, surface_context: &dyn SurfaceCtx, event: &WindowEvent);
 }
 

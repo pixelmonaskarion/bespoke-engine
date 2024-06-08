@@ -1,4 +1,7 @@
+use bytemuck::bytes_of;
 use cgmath::{Matrix4, Point3, Transform, Vector3, Vector4};
+
+use crate::binding::{Binding, Resource};
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
@@ -60,4 +63,25 @@ impl Camera {
 
 pub fn vec_to_point<T>(vec: Vector3<T>) -> Point3<T> {
     Point3::new(vec.x, vec.y, vec.z)
+}
+
+impl Binding for Camera {
+    fn layout(_ty: Option<wgpu::BindingType>) -> Vec<wgpu::BindGroupLayoutEntry> {
+        vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            },
+        ]
+    }
+
+    fn create_resources<'a>(&'a self) -> Vec<Resource> {
+        let mut data = bytes_of(&self.build_view_projection_matrix_raw()).to_vec();
+        data.append(&mut bytes_of(&self.build_view_projection_matrix_raw()).to_vec());
+        vec![
+            Resource::Simple(data),
+        ]
+    }
 }

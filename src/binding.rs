@@ -21,7 +21,7 @@ impl <B: Binding> UniformBinding<B> {
                 Resource::Simple(bytes) => {
                     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some(&format!("{} Buffer", label)),
-                        contents: bytes,
+                        contents: &bytes,
                         usage: BufferUsages::UNIFORM | BufferUsages::VERTEX | BufferUsages::STORAGE,
                     });
                     buffers.insert(i as u32, buffer);
@@ -88,7 +88,7 @@ impl <B: Binding> UniformBinding<B> {
                 Resource::Simple(bytes) => {
                     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some(&format!("{} Buffer", self.label)),
-                        contents: bytes,
+                        contents: &bytes,
                         usage: BufferUsages::UNIFORM | BufferUsages::VERTEX | BufferUsages::STORAGE,
                     });
                     self.buffers.insert(i as u32, buffer);
@@ -130,7 +130,7 @@ pub trait Binding {
 }
 
 pub enum Resource<'a> {
-    Simple(&'a [u8]),
+    Simple(Vec<u8>),
     Bespoke(BindingResource<'a>)
 }
 
@@ -147,7 +147,7 @@ impl <T: bytemuck::Pod> Binding for T {
     }
 
     fn create_resources<'a>(&'a self) -> Vec<Resource> {
-        vec![Resource::Simple(bytes_of(self))]
+        vec![Resource::Simple(bytes_of(self).to_vec())]
     }
 
     // fn create_binding<'a>(&self, binding: Vec<wgpu::BindingResource<'a>>) -> Vec<wgpu::BindGroupEntry<'a>> {
@@ -167,7 +167,7 @@ pub fn bind_resources<'a, B: Binding>(value: &B, device: &Device) -> BindGroup {
             Resource::Simple(bytes) => {
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: None,
-                    contents: bytes,
+                    contents: &bytes,
                     usage: BufferUsages::UNIFORM | BufferUsages::VERTEX | BufferUsages::STORAGE,
                 });
                 buffers.insert(i as u32, buffer);

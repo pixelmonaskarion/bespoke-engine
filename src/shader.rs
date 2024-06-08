@@ -9,19 +9,33 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn new(source: &str, device: &Device, format: TextureFormat, bindings: Vec<&BindGroupLayout>, vertex_buffers: &[wgpu::VertexBufferLayout<'_>], config: Option<ShaderConfig>) -> Self {
-        let full_config = FullShaderConfig::load_defaults(config);
+    pub fn new(source: &str, device: &Device, format: TextureFormat, bindings: Vec<&BindGroupLayout>, vertex_buffers: &[wgpu::VertexBufferLayout<'_>], config: ShaderConfig) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let depth_stencil = if full_config.enable_depth_texture {
+        let depth_stencil = if config.enable_depth_texture {
             Some(wgpu::DepthStencilState {
                 format: DepthTexture::DEPTH_FORMAT,
-                depth_write_enabled: full_config.background,
+                depth_write_enabled: config.background,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
+            })
+        } else {
+            None
+        };
+        let targets = &[Some(wgpu::ColorTargetState {
+            format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let fragment = if !config.depth_only {
+            Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets,
+                compilation_options: PipelineCompilationOptions::default(),
             })
         } else {
             None
@@ -42,16 +56,7 @@ impl Shader {
                 compilation_options: PipelineCompilationOptions::default(),
             },
             depth_stencil,
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: PipelineCompilationOptions::default(),
-            }),
+            fragment,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -59,7 +64,7 @@ impl Shader {
                 cull_mode: Some(wgpu::Face::Back),
                 // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
                 // or Features::POLYGON_MODE_POINT
-                polygon_mode: full_config.line_mode,
+                polygon_mode: config.line_mode,
                 // Requires Features::DEPTH_CLIP_CONTROL
                 unclipped_depth: false,
                 // Requires Features::CONSERVATIVE_RASTERIZATION
@@ -82,7 +87,6 @@ impl Shader {
     }
 
     pub fn new_post_process(source: &str, device: &Device, format: TextureFormat, bindings: &[&wgpu::BindGroupLayout]) -> Self {
-        let _full_config = FullShaderConfig::load_defaults(None);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Post Processing Shader"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -155,29 +159,14 @@ impl Shader {
 }
 
 pub struct ShaderConfig {
-    pub background: Option<bool>,
-    pub line_mode: Option<wgpu::PolygonMode>,
-    pub enable_depth_texture: Option<bool>
+    pub background: bool,
+    pub line_mode: wgpu::PolygonMode,
+    pub enable_depth_texture: bool,
+    pub depth_only: bool,
 }
 
 impl Default for ShaderConfig {
     fn default() -> Self {
-        Self { background: None, line_mode: None, enable_depth_texture: None }
-    }
-}
-
-struct FullShaderConfig {
-    background: bool,
-    line_mode: wgpu::PolygonMode,
-    enable_depth_texture: bool,
-}
-
-impl FullShaderConfig {
-    fn load_defaults(config: Option<ShaderConfig>) -> Self {
-        Self {
-            background: config.as_ref().map(|c| c.background).flatten().unwrap_or(true),
-            line_mode: config.as_ref().map(|c| c.line_mode).flatten().unwrap_or(wgpu::PolygonMode::Fill),
-            enable_depth_texture: config.as_ref().map(|c| c.enable_depth_texture).flatten().unwrap_or(true),
-        }
+        Self { background: true, line_mode: wgpu::PolygonMode::Fill, enable_depth_texture: true, depth_only: false }
     }
 }
