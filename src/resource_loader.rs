@@ -17,7 +17,7 @@ pub fn generate_resources(res_dir: &Path) {
                     let path_string = path.as_os_str().to_str().unwrap().to_string();
                     let src_relative_path = pathdiff::diff_paths(path_string.clone(), &workspace_dir().as_path().join("src")).unwrap().as_os_str().to_str().unwrap().to_string();
                     let out_relative_path = pathdiff::diff_paths(path_string, env::var("OUT_DIR").unwrap()).unwrap().as_os_str().to_str().unwrap().to_string();
-                    resources.entry(src_relative_path.clone(), &format!("include_bytes!(\"{out_relative_path}\")"));
+                    resources.entry(src_relative_path.clone().replace("\\", "/"), &format!("include_bytes!(r#\"{out_relative_path}\"#)"));
                 }
             }
         }
