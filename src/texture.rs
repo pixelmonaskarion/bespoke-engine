@@ -102,7 +102,7 @@ impl Texture {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT | if format == TextureFormat::Rgba32Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT | if format == TextureFormat::Rgba32Float || format == TextureFormat::Rgba16Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
                 view_formats: &[format],
             }
         );
@@ -140,7 +140,7 @@ impl Texture {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D3,
                 format,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | if format == TextureFormat::Rgba32Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | if format == TextureFormat::Rgba32Float || format == TextureFormat::Rgba16Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
                 view_formats: &[format],
             }
         );
@@ -328,7 +328,7 @@ impl Binding for StorageTexture3D {
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::ReadWrite, format: wgpu::TextureFormat::Rgba32Float, view_dimension: wgpu::TextureViewDimension::D3 },
+                ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::ReadWrite, format: wgpu::TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D3 },
                 count: None,
             },
         ]
