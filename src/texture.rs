@@ -102,7 +102,45 @@ impl Texture {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT | if format == TextureFormat::Rgba16Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT | if format == TextureFormat::Rgba32Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
+                view_formats: &[format],
+            }
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            }
+        );
+        Self {
+            sampler,
+            texture,
+            view,
+            size,
+        }
+    }
+
+    pub fn blank_texture_3d(device: &wgpu::Device, width: u32, height: u32, depth: u32, format: wgpu::TextureFormat) -> Self {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: depth,
+        };
+        let texture = device.create_texture(
+            &wgpu::TextureDescriptor {
+                label: Some("Temp Draw Texture"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | if format == TextureFormat::Rgba32Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
                 view_formats: &[format],
             }
         );
@@ -255,7 +293,42 @@ impl Binding for StorageTexture {
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::ReadWrite, format: wgpu::TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 },
+                ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::ReadWrite, format: wgpu::TextureFormat::Rgba32Float, view_dimension: wgpu::TextureViewDimension::D2 },
+                count: None,
+            },
+        ]
+    }
+
+    fn create_resources<'a>(&'a self) -> Vec<Resource> {
+        vec![
+            Resource::Bespoke(wgpu::BindingResource::TextureView(&self.texture.view))
+        ]
+    }
+}
+
+pub struct StorageTexture3D {
+    texture: Texture,
+}
+
+impl StorageTexture3D {
+    pub fn from_texture(texture: Texture) -> Self {
+        Self {
+            texture
+        }
+    }
+
+    pub fn to_texture(self) -> Texture {
+        self.texture
+    }
+}
+
+impl Binding for StorageTexture3D {
+    fn layout(_ty: Option<wgpu::BindingType>) -> Vec<wgpu::BindGroupLayoutEntry> {
+        vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::ReadWrite, format: wgpu::TextureFormat::Rgba32Float, view_dimension: wgpu::TextureViewDimension::D3 },
                 count: None,
             },
         ]
