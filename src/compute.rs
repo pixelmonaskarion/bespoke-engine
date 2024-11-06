@@ -1,7 +1,7 @@
 use wgpu::{BindGroup, Buffer, ComputePipeline, Device, PipelineCompilationOptions, Queue};
 
 pub struct ComputeShader {
-    pipeline: ComputePipeline,
+    pub pipeline: ComputePipeline,
 }
 
 impl ComputeShader {
@@ -19,21 +19,22 @@ impl ComputeShader {
             label: None,
             layout: Some(&compute_pipeline_layout),
             module: &cs_module,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
         });
         Self {
             pipeline,
         }
     }
 
-    pub fn run(&self, bind_groups: &[&BindGroup], groups: [u32; 3], device: &Device, queue: &Queue) {
+    pub fn run_once(&self, bind_groups: Vec<&BindGroup>, groups: [u32; 3], device: &Device, queue: &Queue) {
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut cpass = encoder.begin_compute_pass(&Default::default());
             cpass.set_pipeline(&self.pipeline);
             for (i, bind_group) in bind_groups.into_iter().enumerate() {
-                cpass.set_bind_group(i as u32, bind_group, &[]);
+                cpass.set_bind_group(i as u32, Some(bind_group), &[]);
             }
             cpass.dispatch_workgroups(groups[0], groups[1], groups[2]);
         }

@@ -153,7 +153,7 @@ pub fn load_texture(
     queue: &wgpu::Queue,
 ) -> anyhow::Result<Texture> {
     let data = load_resource(file_name).unwrap();
-    Texture::from_bytes(device, queue, &data, file_name, None)
+    Texture::from_bytes(device, queue, &data, file_name, None, None)
 }
 
 #[repr(C)]

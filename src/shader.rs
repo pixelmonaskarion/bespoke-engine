@@ -33,7 +33,7 @@ impl Shader {
         let fragment = if !config.depth_only {
             Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets,
                 compilation_options: PipelineCompilationOptions::default(),
             })
@@ -51,7 +51,7 @@ impl Shader {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: vertex_buffers,
                 compilation_options: PipelineCompilationOptions::default(),
             },
@@ -78,6 +78,7 @@ impl Shader {
             // If the pipeline will be used with a multiview render pass, this
             // indicates how many array layers the attachments will have.
             multiview: None,
+            cache: None,
         });
         Self {
             shader,
@@ -102,7 +103,7 @@ impl Shader {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[BasicVertex::desc()],
                 compilation_options: PipelineCompilationOptions::default(),
             },
@@ -116,7 +117,7 @@ impl Shader {
             depth_stencil: None,
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -145,6 +146,7 @@ impl Shader {
             // If the pipeline will be used with a multiview render pass, this
             // indicates how many array layers the attachments will have.
             multiview: None,
+            cache: None,
         });
         Self {
             shader,

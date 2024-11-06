@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 
 use bytemuck::{bytes_of, NoUninit};
 use cgmath::Vector2;
-use wgpu::{Backends, Device, InstanceDescriptor, Limits, RenderPass};
+use wgpu::{Backends, Device, Features, InstanceDescriptor, Limits, RenderPass};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, ElementState, KeyEvent, Touch, WindowEvent};
@@ -63,9 +63,10 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
             ).await.unwrap();
             let (device, queue) = adapter.request_device(
                 &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::POLYGON_MODE_LINE,
+                    required_features: H::required_features(),
                     required_limits: H::limits(),
-                    label: None 
+                    label: None,
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
                 },
                 None,
             ).await.unwrap();
@@ -347,6 +348,7 @@ pub trait WindowHandler {
     fn config(&self) -> Option<WindowConfig>;
     fn surface_config() -> Option<SurfaceConfig>;
     fn limits() -> Limits;
+    fn required_features() -> Features;
     fn mouse_moved(&mut self, surface_context: &dyn SurfaceCtx, mouse_pos: PhysicalPosition<f64>);
     fn mouse_motion(&mut self, surface_context: &dyn SurfaceCtx, mouse_delta: (f64, f64));
     fn input_event(&mut self, surface_context: &dyn SurfaceCtx, input_event: &KeyEvent);
