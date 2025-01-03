@@ -1,14 +1,17 @@
-use wgpu::{BindGroup, Buffer, ComputePipeline, Device, PipelineCompilationOptions, Queue};
+use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, Buffer, ComputePipeline, Device, PipelineCompilationOptions, Queue};
+
+use crate::shader::{parse_shader, ShaderType};
 
 pub struct ComputeShader {
     pub pipeline: ComputePipeline,
 }
 
 impl ComputeShader {
-    pub fn new(source: &str, bindings: &[&wgpu::BindGroupLayout], device: &Device) -> Self {
+    pub fn new(source: &str, bindings: &[&wgpu::BindGroupLayout], shader_types: Vec<&ShaderType>, device: &Device) -> Self {
+        let parsed_source = parse_shader(source, shader_types);
         let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)).into(),
+            source: wgpu::ShaderSource::Wgsl(parsed_source.into()).into(),
         });
         let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
@@ -44,6 +47,8 @@ impl ComputeShader {
 
 pub struct ComputeOutput {
     pub buffer: Buffer,
+    pub binding: BindGroup,
+    pub layout: BindGroupLayout,
 }
 
 impl ComputeOutput {
@@ -51,15 +56,58 @@ impl ComputeOutput {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
         });
+        let layout = 
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: false,
+                        },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }]
+            });
+            let binding = device.create_bind_group(&BindGroupDescriptor {
+                label: None,
+                layout: &layout,
+                entries: &[BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }]
+            });
         Self {
-            buffer
+            buffer,
+            binding,
+            layout,
         }
     }
 
-    pub fn read(&self) -> Vec<u8> {
-        self.buffer.slice(..).get_mapped_range().to_vec()
+    pub fn read(self, device: &Device, queue: &Queue) -> Vec<u8> {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let map_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Compute Output Map Buffer"),
+            size: self.buffer.size(),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map_buffer, 0, self.buffer.size());
+        queue.submit([encoder.finish()]);
+        map_buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |result| {
+                result.unwrap();
+            });
+        device.poll(wgpu::Maintain::Wait);
+        let bytes = map_buffer.slice(..).get_mapped_range().to_vec();
+        map_buffer.unmap();
+        bytes
     }
 }

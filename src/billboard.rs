@@ -1,6 +1,6 @@
-use crate::{binding::Descriptor, model::{Model, Render, ToRaw}, instance::Instance};
+use crate::{binding::Descriptor, culling::culled, instance::Instance, model::{calculate_bounding_box, Model, Render, ToRaw}, VertexTrait};
 use bytemuck::{bytes_of, NoUninit};
-use cgmath::{Quaternion, Vector3};
+use cgmath::{Matrix4, Quaternion, Vector3};
 use wgpu::Device;
 
 pub struct Billboard {
@@ -17,7 +17,8 @@ impl Billboard {
             Vertex { position: [size*width/2.0, size*-height/2.0, 0.0], tex_pos: [1.0, 1.0], normal: [0.0, 0.0, 0.0] },
             Vertex { position: [size*width/2.0, size*height/2.0, 0.0], tex_pos: [1.0, 0.0], normal: [0.0, 0.0, 0.0] },
         ];
-        let model = Model::new_instances(vertices, &[0_u16, 1, 2, 2, 1, 3], vec![Instance {position, rotation}], device);
+        let bounding_box = calculate_bounding_box(&vertices);
+        let model = Model::new_instances(vertices, &[0_u16, 1, 2, 2, 1, 3], vec![Instance {position, rotation}], bounding_box, device);
         Self {
             model,
             position,
@@ -50,8 +51,17 @@ impl Render for Billboard {
     fn render<'a: 'b, 'b>(&'a self, render_pass: &mut wgpu::RenderPass<'b>) {
         self.model.render(render_pass);
     }
-    fn render_instances<'a: 'b, 'c: 'b, 'b>(&'a self, render_pass: &mut wgpu::RenderPass<'b>, instances: &'c wgpu::Buffer, range: std::ops::Range<u32>) {
+    fn render_instances<'a: 'b, 'b>(&'a self, render_pass: &mut wgpu::RenderPass<'b>, instances: &wgpu::Buffer, range: std::ops::Range<u32>) {
         self.model.render_instances(render_pass, instances, range);
+    }
+    fn render_culled_transformed<'a: 'b, 'b>(&'a self, render_pass: &mut wgpu::RenderPass<'b>, instance_transform: Option<cgmath::Matrix4<f32>>, camera: &crate::camera::Camera) {
+        if !culled(&self.model, instance_transform.unwrap_or(Matrix4::from_translation(self.position) * Matrix4::from(self.rotation)), camera) {
+            self.render(render_pass);
+        }
+    }
+
+    fn render_culled<'a: 'b, 'b>(&'a self, camera: &crate::binding::UniformBinding<crate::camera::Camera>, render_pass: &mut wgpu::RenderPass<'b>, culling: &mut crate::culling::CullingCompute, surface_ctx: &dyn crate::surface_context::SurfaceCtx) {
+        todo!()
     }
 }
 
@@ -63,9 +73,8 @@ pub struct Vertex {
     pub normal: [f32; 3],
 }
 
-impl Vertex {
-    #[allow(dead_code)]
-    pub fn pos(&self) -> Vector3<f32> {
+impl VertexTrait for Vertex {
+    fn pos(&self) -> Vector3<f32> {
         return Vector3::new(self.position[0], self.position[1], self.position[2]);
     }
 }

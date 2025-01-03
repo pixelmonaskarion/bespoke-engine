@@ -1,14 +1,17 @@
 use image::GenericImageView;
 use anyhow::*;
-use wgpu::{BindGroupLayout, Device, TextureFormat, TextureUsages};
+use wgpu::{BindGroupLayout, Device, TextureFormat, TextureUsages, TextureView};
 
-use crate::binding::{Binding, Resource};
+use crate::{binding::{Binding, Resource}, shader::ShaderType};
+
+const STORAGE_FORMATS: [TextureFormat; 3] = [TextureFormat::Rgba32Float, TextureFormat::Rgba16Float, TextureFormat::Rgba8Unorm];
 
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
     pub size: wgpu::Extent3d,
+    pub format: wgpu::TextureFormat,
 }
 
 impl Texture {
@@ -85,7 +88,7 @@ impl Texture {
             }
         );
         
-        Ok(Self { texture, view, sampler, size})
+        Ok(Self { texture, view, sampler, size, format: format.unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb) })
     }
 
     pub fn blank_texture(device: &wgpu::Device, width: u32, height: u32, format: wgpu::TextureFormat) -> Self {
@@ -102,7 +105,7 @@ impl Texture {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT | if format == TextureFormat::Rgba32Float || format == TextureFormat::Rgba16Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT | if STORAGE_FORMATS.contains(&format) { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
                 view_formats: &[format],
             }
         );
@@ -123,6 +126,7 @@ impl Texture {
             texture,
             view,
             size,
+            format,
         }
     }
 
@@ -134,17 +138,20 @@ impl Texture {
         };
         let texture = device.create_texture(
             &wgpu::TextureDescriptor {
-                label: Some("Temp Draw Texture"),
+                label: Some("Temp 3D Texture"),
                 size,
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D3,
                 format,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | if format == TextureFormat::Rgba32Float || format == TextureFormat::Rgba16Float { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST | if STORAGE_FORMATS.contains(&format) { TextureUsages::STORAGE_BINDING } else { TextureUsages::TEXTURE_BINDING },
                 view_formats: &[format],
             }
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D3),
+            ..Default::default()
+        });
         let sampler = device.create_sampler(
             &wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::Repeat,
@@ -161,6 +168,7 @@ impl Texture {
             texture,
             view,
             size,
+            format,
         }
     }
     
@@ -187,7 +195,7 @@ impl Binding for Texture {
         vec![
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Texture {
                     multisampled: false,
                     view_dimension: wgpu::TextureViewDimension::D2,
@@ -197,7 +205,7 @@ impl Binding for Texture {
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 // This should match the filterable field of the
                 // corresponding Texture entry above.
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
@@ -212,11 +220,19 @@ impl Binding for Texture {
             Resource::Bespoke(wgpu::BindingResource::Sampler(&self.sampler))
         ]
     }
+
+    fn shader_type() -> ShaderType {
+        ShaderType {
+            var_types: vec!["".into(), "".into()],
+            wgsl_types: vec!["texture_2d<f32>".into(), "sampler".into()],
+        }
+    }
 }
 
 pub struct DepthTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
 }
 
 impl DepthTexture {
@@ -241,9 +257,21 @@ impl DepthTexture {
         let texture = device.create_texture(&desc);
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            }
+        );
         Self { 
             texture, 
             view,
+            sampler,
         }
     }
 }
@@ -261,13 +289,29 @@ impl Binding for DepthTexture {
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                // This should match the filterable field of the
+                // corresponding Texture entry above.
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ]
     }
 
     fn create_resources<'a>(&'a self) -> Vec<Resource> {
         vec![
-            Resource::Bespoke(wgpu::BindingResource::TextureView(&self.view))
+            Resource::Bespoke(wgpu::BindingResource::TextureView(&self.view)),
+            Resource::Bespoke(wgpu::BindingResource::Sampler(&self.sampler)),
         ]
+    }
+
+    fn shader_type() -> ShaderType {
+        ShaderType {
+            var_types: vec!["".into(), "".into()],
+            wgsl_types: vec!["texture_depth_2d".into(), "sampler".into()],
+        }
     }
 }
 
@@ -284,6 +328,10 @@ impl StorageTexture {
 
     pub fn to_texture(self) -> Texture {
         self.texture
+    }
+
+    pub fn view(&self) -> &TextureView {
+        &self.texture.view
     }
 }
 
@@ -304,10 +352,17 @@ impl Binding for StorageTexture {
             Resource::Bespoke(wgpu::BindingResource::TextureView(&self.texture.view))
         ]
     }
+
+    fn shader_type() -> ShaderType {
+        ShaderType {
+            var_types: vec!["".into()],
+            wgsl_types: vec!["texture_storage_2d<rgba32float, read_write>".into()],
+        }
+    }
 }
 
 pub struct StorageTexture3D {
-    texture: Texture,
+    pub texture: Texture,
 }
 
 impl StorageTexture3D {
@@ -328,7 +383,7 @@ impl Binding for StorageTexture3D {
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::ReadWrite, format: wgpu::TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D3 },
+                ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::ReadWrite, format: wgpu::TextureFormat::Rgba32Float, view_dimension: wgpu::TextureViewDimension::D3 },
                 count: None,
             },
         ]
@@ -338,5 +393,55 @@ impl Binding for StorageTexture3D {
         vec![
             Resource::Bespoke(wgpu::BindingResource::TextureView(&self.texture.view))
         ]
+    }
+
+    fn shader_type() -> ShaderType {
+        ShaderType {
+            var_types: vec!["".into()],
+            wgsl_types: vec!["texture_storage_3d<rgba32float, read_write>".into()],
+        }
+    }
+}
+
+pub struct Texture3D {
+    pub texture: Texture,
+}
+
+impl Binding for Texture3D {
+    fn layout(_ty: Option<wgpu::BindingType>) -> Vec<wgpu::BindGroupLayoutEntry> {
+        vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                // This should match the filterable field of the
+                // corresponding Texture entry above.
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                count: None,
+            },
+        ]
+    }
+
+    fn create_resources<'a>(&'a self) -> Vec<Resource> {
+        vec![
+            Resource::Bespoke(wgpu::BindingResource::TextureView(&self.texture.view)),
+            Resource::Bespoke(wgpu::BindingResource::Sampler(&self.texture.sampler))
+        ]
+    }
+
+    fn shader_type() -> ShaderType {
+        ShaderType {
+            var_types: vec!["".into(); 2],
+            wgsl_types: vec!["texture_3d<f32>".into(), "sampler".into()],
+        }
     }
 }

@@ -11,9 +11,10 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use winit::event_loop::ActiveEventLoop;
 
-use crate::binding::{bind_resources, create_layout, Descriptor, UniformBinding};
+use crate::binding::{bind_resources, create_layout, Binding, Descriptor, UniformBinding};
+use crate::culling::AABB;
 use crate::model::{Model, Render, ToRaw};
-use crate::shader::{Shader, ShaderConfig};
+use crate::shader::{Shader, ShaderConfig, CUSTOM_SHADER_TYPE_SOURCE};
 use crate::surface_context::{SurfaceContext, SurfaceCtx};
 use crate::texture::{DepthTexture, Texture};
 
@@ -26,12 +27,13 @@ pub struct Surface<'b: 'a, 'a, H: WindowHandler> {
     pub ready: &'b dyn Fn(&dyn SurfaceCtx) -> H,
 }
 
-impl <'b: 'a, 'a, H: WindowHandler>Surface<'b, 'a, H> {
+impl <'b: 'a, 'a, H: WindowHandler> Surface<'b, 'a, H> {
     pub async fn new(ready: &'b dyn Fn(&dyn SurfaceCtx) -> H) -> Self {
         let instance = wgpu::Instance::new(InstanceDescriptor { 
             backends: Backends::all(),
             ..Default::default()
         });
+        *CUSTOM_SHADER_TYPE_SOURCE.lock().unwrap() = H::custom_shader_type_source();
         return Self {
             // window: None,
             instance,
@@ -79,7 +81,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
             surface.configure(&device, &config);
             let depth_texture = DepthTexture::create_depth_texture(&device, config.width, config.height, "Depth Texture");
             let depth_texture_binding = UniformBinding::new(&device, "Depth Texture", depth_texture, None);
-            let texture_renderer_shader = Shader::new(include_str!("screen_renderer.wgsl"), &device, config.format, vec![&create_layout::<Texture>(&device)], &[BasicVertex::desc()], ShaderConfig::default());
+            let texture_renderer_shader = Shader::new(include_str!("screen_renderer.wgsl"), &device, vec![config.format], vec![&create_layout::<Texture>(&device)], vec![&Texture::shader_type()], &[BasicVertex::desc()], ShaderConfig::default());
             let screen_model = BasicVertex::one_face(&device);
             let surface_context = SurfaceContext {
                 window_id: window.id(),
@@ -355,6 +357,7 @@ pub trait WindowHandler {
     fn touch(&mut self, surface_context: &dyn SurfaceCtx, touch: &Touch);
     fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, surface_context: &'c dyn SurfaceCtx, render_pass: & mut RenderPass<'b>, surface_texture: &'c UniformBinding<Texture>);
     fn other_window_event(&mut self, surface_context: &dyn SurfaceCtx, event: &WindowEvent);
+    fn custom_shader_type_source() -> String;
 }
 
 pub struct WindowConfig {
@@ -411,10 +414,10 @@ impl FullSurfaceConfig {
 
 
 #[repr(C)]
-#[derive(NoUninit, Copy, Clone)]
+#[derive(NoUninit, Copy, Clone, Default, Debug)]
 pub struct BasicVertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
+    pub position: [f32; 3],
+    pub tex_coords: [f32; 2],
 }
 
 impl BasicVertex {
@@ -424,7 +427,7 @@ impl BasicVertex {
             Self { position: [-1.0, 1.0, 0.0], tex_coords: [0.0, 0.0] },
             Self { position: [1.0, -1.0, 0.0], tex_coords: [1.0, 1.0] },
             Self { position: [1.0, 1.0, 0.0], tex_coords: [1.0, 0.0] },
-        ], &[0_u16, 2, 1, 2, 3, 1], device)
+        ], &[0_u16, 2, 1, 2, 3, 1], AABB { dimensions: [1.0, 1.0, 0.0] }, device)
     }
 }
 

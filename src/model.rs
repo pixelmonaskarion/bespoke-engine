@@ -1,6 +1,9 @@
 use std::ops::Range;
 
+use cgmath::{Matrix4, SquareMatrix};
 use wgpu::{util::DeviceExt, Buffer, IndexFormat, RenderPass};
+
+use crate::{binding::UniformBinding, camera::Camera, culling::{culled, CullingCompute, AABB}, surface_context::SurfaceCtx, VertexTrait};
 
 #[derive(Debug)]
 pub struct Model {
@@ -11,10 +14,11 @@ pub struct Model {
     pub instance_buffer: Option<wgpu::Buffer>,
     pub num_instances: u32,
     pub index_format: IndexFormat,
+    pub bounding_box: AABB,
 }
 
 impl Model {
-    pub fn new_instances<I: IndexFormatType + bytemuck::Pod>(vertices: Vec<impl ToRaw>, indices: &[I], instances: Vec<impl ToRaw>, device: & dyn DeviceExt) -> Self {
+    pub fn new_instances<I: IndexFormatType + bytemuck::Pod>(vertices: Vec<impl ToRaw>, indices: &[I], instances: Vec<impl ToRaw>, bounding_box: AABB, device: & dyn DeviceExt) -> Self {
         let [vertex_buffer, index_buffer] = Self::buffers(
             &vertices.iter().map(|vertex| { vertex.to_raw() }).collect::<Vec<Vec<u8>>>().concat(), 
             bytemuck::cast_slice(indices), 
@@ -23,7 +27,7 @@ impl Model {
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Instance Buffer"),
                 contents: &instances.iter().map(|instance| instance.to_raw()).collect::<Vec<_>>().concat(),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             }
         );
         let num_indices = indices.len() as u32;
@@ -37,10 +41,11 @@ impl Model {
             num_vertices,
             num_instances,
             index_format: I::get_index_format(),
+            bounding_box,
         }
     }
 
-    pub fn new<I: IndexFormatType + bytemuck::Pod>(vertices: Vec<impl ToRaw>, indices: &[I], device: & dyn DeviceExt) -> Self {
+    pub fn new<I: IndexFormatType + bytemuck::Pod>(vertices: Vec<impl ToRaw>, indices: &[I], bounding_box: AABB, device: & dyn DeviceExt) -> Self {
         let [vertex_buffer, index_buffer] = Self::buffers(
             &vertices.iter().map(|vertex| { vertex.to_raw() }).collect::<Vec<Vec<u8>>>().concat(), 
             bytemuck::cast_slice(indices), 
@@ -55,23 +60,18 @@ impl Model {
             num_vertices,
             num_instances: 1,
             index_format: I::get_index_format(),
+            bounding_box,
         }
     }
 
-    pub fn new_vertex_buffer<I: IndexFormatType + bytemuck::Pod>(vertex_buffer: Buffer, num_vertices: u32, instances: Vec<impl ToRaw>, indices: &[I], device: & dyn DeviceExt) -> Self {
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+    pub fn new_buffers(vertex_buffer: Buffer, num_vertices: u32, instances: Vec<impl ToRaw>, index_buffer: Buffer, num_indices: u32, index_format: IndexFormat, bounding_box: AABB, device: & dyn DeviceExt) -> Self {
         let instance_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Instance Buffer"),
                 contents: &instances.iter().map(|instance| instance.to_raw()).collect::<Vec<_>>().concat(),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             }
         );
-        let num_indices = indices.len() as u32;
         let num_instances = instances.len() as u32;
         Model {
             vertex_buffer,
@@ -80,7 +80,8 @@ impl Model {
             num_indices,
             num_vertices,
             num_instances,
-            index_format: I::get_index_format(),
+            index_format,
+            bounding_box,
         }
     }
 
@@ -103,11 +104,30 @@ impl Model {
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Instance Buffer"),
                 contents: &instances.iter().map(|instance| instance.to_raw()).collect::<Vec<_>>().concat(),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             }
         ));
         self.num_instances = instances.len() as u32;
     }
+}
+
+pub fn calculate_bounding_box(vertices: &Vec<impl VertexTrait>) -> AABB {
+    let mut bounding_box = AABB {
+        dimensions: [0.0; 3],
+    };
+    for vertex in vertices {
+        let pos = vertex.pos();
+        if pos.x.abs() > bounding_box.dimensions[0] {
+            bounding_box.dimensions[0] = pos.x.abs();
+        }
+        if pos.y.abs() > bounding_box.dimensions[1] {
+            bounding_box.dimensions[1] = pos.y.abs();
+        }
+        if pos.z.abs() > bounding_box.dimensions[2] {
+            bounding_box.dimensions[2] = pos.z.abs();
+        }
+    }
+    bounding_box
 }
 
 pub trait IndexFormatType {
@@ -136,7 +156,22 @@ impl Render for Model {
         render_pass.draw_indexed(0..self.num_indices, 0, 0..self.num_instances);
     }
     
-    fn render_instances<'a: 'b, 'c: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instances: &'c Buffer, range: Range<u32>) {
+    fn render_culled_transformed<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instance_transform: Option<Matrix4<f32>>, camera: &Camera) {
+        if !culled(self, instance_transform.unwrap_or(Matrix4::identity()), camera) {
+            self.render(render_pass);
+        }
+    }
+
+    fn render_culled<'a: 'b, 'b>(&'a self, camera: &UniformBinding<Camera>, render_pass: &mut RenderPass<'b>, culling: &mut CullingCompute, surface_ctx: &dyn SurfaceCtx) {
+        if let Some(instance_buffer) = &self.instance_buffer {
+            let (culled_instances, num_instances) = culling.run(&instance_buffer, self.num_instances, &self.bounding_box, camera, surface_ctx.device(), surface_ctx.queue());
+            self.render_instances(render_pass, &culled_instances, 0..num_instances);
+        } else {
+            self.render_culled_transformed(render_pass, None, &camera.value);
+        }
+    }
+    
+    fn render_instances<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instances: &Buffer, range: Range<u32>) {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_vertex_buffer(1, instances.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
@@ -150,5 +185,7 @@ pub trait ToRaw {
 
 pub trait Render {
     fn render<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>);
-    fn render_instances<'a: 'b, 'c: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instances: &'c Buffer, range: Range<u32>);
+    fn render_instances<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instances: &Buffer, range: Range<u32>);
+    fn render_culled_transformed<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instance_transform: Option<Matrix4<f32>>, camera: &Camera);
+    fn render_culled<'a: 'b, 'b>(&'a self, camera: &UniformBinding<Camera>, render_pass: &mut RenderPass<'b>, culling: &mut CullingCompute, surface_ctx: &dyn SurfaceCtx);
 }
