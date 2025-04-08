@@ -13,7 +13,7 @@ pub struct SurfaceContext<'a> {
     pub device: Device,
     pub queue: Queue,
     pub screen_model: Model,
-    pub texture_renderer_shader: Shader,
+    pub texture_renderer_shader: Shader<'a>,
     pub window_id: WindowId,
     pub size: (u32, u32),
     pub window: Arc<Window>,

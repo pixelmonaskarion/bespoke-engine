@@ -2,37 +2,33 @@ use std::sync::Mutex;
 
 use wgpu::{BindGroupLayout, Device, FrontFace, PipelineCompilationOptions, PipelineLayout, RenderPass, RenderPipeline, ShaderModule, TextureFormat};
 
-use crate::{binding::{Descriptor, Uniform}, texture::DepthTexture, window::BasicVertex};
+use crate::{binding::{Descriptor, Uniform}, resource_loader::load_resource_string, texture::DepthTexture, window::BasicVertex};
 
 pub static CUSTOM_SHADER_TYPE_SOURCE: Mutex<String> = Mutex::new(String::new());
 
-pub struct Shader {
+pub struct Shader<'a> {
     pub shader: ShaderModule,
     pub layout: PipelineLayout,
     pub pipeline: RenderPipeline,
+    pub resource_path: String,
+    pub config: ShaderConfig,
+    pub vertex_buffers: Vec<wgpu::VertexBufferLayout<'a>>,
+    pub shader_types: Vec<ShaderType>,
+    pub formats: Vec<TextureFormat>,
 }
 
-impl Shader {
-    pub fn new(source: &str, device: &Device, formats: Vec<TextureFormat>, bindings: Vec<&BindGroupLayout>, shader_types: Vec<&ShaderType>, vertex_buffers: &[wgpu::VertexBufferLayout<'_>], config: ShaderConfig) -> Self {
-        let parsed_source = parse_shader(source, shader_types);
+impl <'a> Shader<'a> {
+    pub fn new(resource_path: &str, device: &Device, formats: Vec<TextureFormat>, bindings: Vec<&BindGroupLayout>, shader_types: Vec<&ShaderType>, vertex_buffers: Vec<wgpu::VertexBufferLayout<'a>>, config: ShaderConfig) -> Self {
+        let source = &load_resource_string(resource_path);
+        let shader_types_owned = shader_types.clone().into_iter().map(|it| it.clone()).collect();
+        let parsed_source = parse_shader(source, &shader_types_owned);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(parsed_source.clone().into()),
         });
-        let depth_stencil = if config.enable_depth_texture {
-            Some(wgpu::DepthStencilState {
-                format: DepthTexture::DEPTH_FORMAT,
-                depth_write_enabled: config.background,
-                depth_compare: config.depth_compare,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            })
-        } else {
-            None
-        };
-        let targets = &formats.into_iter().map(|format| {
+        let targets = &formats.iter().map(|format| {
             Some(wgpu::ColorTargetState {
-                format,
+                format: *format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })
@@ -59,10 +55,10 @@ impl Shader {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: vertex_buffers,
+                buffers: &vertex_buffers,
                 compilation_options: PipelineCompilationOptions::default(),
             },
-            depth_stencil,
+            depth_stencil: config.depth_stencil(),
             fragment,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -91,15 +87,83 @@ impl Shader {
             shader,
             layout,
             pipeline,
+            resource_path: resource_path.into(),
+            config,
+            vertex_buffers,
+            shader_types: shader_types_owned,
+            formats,
         }
     }
 
-    pub fn new_uniform(source: &str, device: &Device, formats: Vec<TextureFormat>, uniforms: Vec<&dyn Uniform>, vertex_buffers: &[wgpu::VertexBufferLayout<'_>], config: ShaderConfig) -> Self {
-        Self::new(source, device, formats, uniforms.iter().map(|it| it.layout()).collect(), uniforms.iter().map(|it| it.shader_type()).collect(), vertex_buffers, config)
+    pub fn reload_source(&mut self, device: &Device) {
+        let source = &load_resource_string(&self.resource_path);
+        let parsed_source = parse_shader(source, &self.shader_types);
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(parsed_source.clone().into()),
+        });
+        let targets = &self.formats.iter().map(|format| {
+            Some(wgpu::ColorTargetState {
+                format: *format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+        }).collect::<Vec<Option<wgpu::ColorTargetState>>>();
+        let fragment = if !self.config.depth_only {
+            Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets,
+                compilation_options: PipelineCompilationOptions::default(),
+            })
+        } else {
+            None
+        };
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&self.layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &self.vertex_buffers,
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            depth_stencil: self.config.depth_stencil(),
+            fragment,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: self.config.face_cull.unwrap_or(FrontFace::Ccw),
+                cull_mode: self.config.face_cull.map(|_| wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+                // or Features::POLYGON_MODE_POINT
+                polygon_mode: self.config.line_mode,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            // If the pipeline will be used with a multiview render pass, this
+            // indicates how many array layers the attachments will have.
+            multiview: None,
+            cache: None,
+        });
+        self.pipeline = pipeline;
     }
 
-    pub fn new_post_process(source: &str, device: &Device, format: TextureFormat, bindings: Vec<&wgpu::BindGroupLayout>, binding_types: Vec<&ShaderType>) -> Self {
-        let parsed_source = parse_shader(source, binding_types);
+    pub fn new_uniform(resource_path: &str, device: &Device, formats: Vec<TextureFormat>, uniforms: Vec<&dyn Uniform>, vertex_buffers: Vec<wgpu::VertexBufferLayout<'a>>, config: ShaderConfig) -> Self {
+        Self::new(resource_path, device, formats, uniforms.iter().map(|it| it.layout()).collect(), uniforms.iter().map(|it| it.shader_type()).collect(), vertex_buffers, config)
+    }
+
+    pub fn new_post_process(resource_path: &str, device: &Device, format: TextureFormat, bindings: Vec<&wgpu::BindGroupLayout>, binding_types: Vec<&ShaderType>) -> Self {
+        let source = &load_resource_string(resource_path);
+        let shader_types_owned = binding_types.clone().into_iter().map(|it| it.clone()).collect();
+        let parsed_source = parse_shader(source, &shader_types_owned);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Post Processing Shader"),
             source: wgpu::ShaderSource::Wgsl(parsed_source.into()),
@@ -163,7 +227,12 @@ impl Shader {
         Self {
             shader,
             layout,
-            pipeline
+            pipeline,
+            resource_path: resource_path.into(),
+            config: ShaderConfig { enable_depth_texture: false, ..Default::default() },
+            vertex_buffers: vec![BasicVertex::desc()],
+            shader_types: shader_types_owned,
+            formats: vec![format],
         }
     }
 
@@ -185,14 +254,29 @@ pub struct ShaderConfig {
     pub depth_compare: wgpu::CompareFunction,
 }
 
+impl ShaderConfig {
+    fn depth_stencil(&self) -> Option<wgpu::DepthStencilState> {
+        if self.enable_depth_texture {
+            return Some(wgpu::DepthStencilState {
+                format: DepthTexture::DEPTH_FORMAT,
+                depth_write_enabled: self.background,
+                depth_compare: self.depth_compare,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            });
+        }
+        None
+    }
+}
+
 impl Default for ShaderConfig {
     fn default() -> Self {
         Self { background: true, line_mode: wgpu::PolygonMode::Fill, enable_depth_texture: true, depth_only: false, face_cull: Some(FrontFace::Ccw), depth_compare: wgpu::CompareFunction::Less }
     }
 }
 
-pub fn parse_shader(shader_source: &str, binding_types: Vec<&ShaderType>) -> String {
-    let global_types = include_str!("global_shader_types.wgsl");
+pub fn parse_shader(shader_source: &str, binding_types: &Vec<ShaderType>) -> String {
+    let global_types = load_resource_string("buildins/global_shader_types.wgsl");
     let custom_types = CUSTOM_SHADER_TYPE_SOURCE.lock().unwrap().clone();
     let mut parsed = format!(
 "//GLOBAL TYPES
@@ -232,6 +316,7 @@ pub fn parse_shader(shader_source: &str, binding_types: Vec<&ShaderType>) -> Str
     parsed
 }
 
+#[derive(Clone)]
 pub struct ShaderType {
     pub var_types: Vec<String>,
     pub wgsl_types: Vec<String>,

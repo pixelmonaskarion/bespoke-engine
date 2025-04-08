@@ -6,14 +6,15 @@ use cgmath::Vector2;
 use wgpu::{Backends, Device, Features, InstanceDescriptor, Limits, RenderPass};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{DeviceEvent, ElementState, KeyEvent, Touch, WindowEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::event::{DeviceEvent, ElementState, KeyEvent, Modifiers, Touch, WindowEvent};
+use winit::keyboard::{KeyCode, ModifiersKeyState, PhysicalKey};
 use winit::window::{Window, WindowId};
 use winit::event_loop::ActiveEventLoop;
 
 use crate::binding::{bind_resources, create_layout, Binding, Descriptor, UniformBinding};
 use crate::culling::AABB;
 use crate::model::{Model, Render, ToRaw};
+use crate::resource_loader::{ResourceType, GLOBAL_PROJECT_RESOURCES};
 use crate::shader::{Shader, ShaderConfig, CUSTOM_SHADER_TYPE_SOURCE};
 use crate::surface_context::{SurfaceContext, SurfaceCtx};
 use crate::texture::{DepthTexture, Texture};
@@ -22,6 +23,7 @@ pub struct Surface<'b: 'a, 'a, H: WindowHandler> {
     pub instance: wgpu::Instance,
     pub surface_context: Option<SurfaceContext<'a>>,
     pub mouse_pos: [f64; 2],
+    pub current_modifiers: Modifiers,
     pub last_time: SystemTime,
     pub handler: Option<H>,
     pub ready: &'b dyn Fn(&dyn SurfaceCtx) -> H,
@@ -29,15 +31,17 @@ pub struct Surface<'b: 'a, 'a, H: WindowHandler> {
 
 impl <'b: 'a, 'a, H: WindowHandler> Surface<'b, 'a, H> {
     pub async fn new(ready: &'b dyn Fn(&dyn SurfaceCtx) -> H) -> Self {
-        let instance = wgpu::Instance::new(InstanceDescriptor { 
+        let instance = wgpu::Instance::new(&InstanceDescriptor { 
             backends: Backends::all(),
             ..Default::default()
         });
+        *GLOBAL_PROJECT_RESOURCES.lock().unwrap() = H::resources();
         *CUSTOM_SHADER_TYPE_SOURCE.lock().unwrap() = H::custom_shader_type_source();
         return Self {
             // window: None,
             instance,
             surface_context: None,
+            current_modifiers: Modifiers::default(),
             mouse_pos: [0.0, 0.0],
             last_time: SystemTime::now(),
             handler: None,
@@ -81,7 +85,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
             surface.configure(&device, &config);
             let depth_texture = DepthTexture::create_depth_texture(&device, config.width, config.height, "Depth Texture");
             let depth_texture_binding = UniformBinding::new(&device, "Depth Texture", depth_texture, None);
-            let texture_renderer_shader = Shader::new(include_str!("screen_renderer.wgsl"), &device, vec![config.format], vec![&create_layout::<Texture>(&device)], vec![&Texture::shader_type()], &[BasicVertex::desc()], ShaderConfig::default());
+            let texture_renderer_shader = Shader::new("buildins/screen_renderer.wgsl", &device, vec![config.format], vec![&create_layout::<Texture>(&device)], vec![&Texture::shader_type()], vec![BasicVertex::desc()], ShaderConfig::default());
             let screen_model = BasicVertex::one_face(&device);
             let surface_context = SurfaceContext {
                 window_id: window.id(),
@@ -129,8 +133,10 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
     ) {
         if self.surface_context.as_ref().map(|ctx| ctx.window_id) == Some(window_id) {
         match &event {
-            WindowEvent::CloseRequested
-            | WindowEvent::KeyboardInput {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
                         state: ElementState::Pressed,
@@ -139,14 +145,19 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                     },
                 ..
             } => {
-                event_loop.exit();
-            },
+                if self.current_modifiers.lsuper_state() == ModifiersKeyState::Pressed {
+                    event_loop.exit();
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some(surface_context) = &self.surface_context {
                     if let Some(handler) = &mut self.handler {
-                        handler.input_event(surface_context, &event);
+                        handler.input_event(surface_context, &event, &self.current_modifiers);
                     }
                 }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.current_modifiers = *modifiers;
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(surface_context) = &self.surface_context {
@@ -171,7 +182,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                     }
                     surface_context.surface.configure(&surface_context.device, &surface_context.config);
                     let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture");
-                    surface_context.depth_texture.set_data(&surface_context.device, depth_texture);
+                    surface_context.depth_texture.replace_data(&surface_context.device, depth_texture);
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -182,7 +193,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                         handler.resize(surface_context, Vector2::new(surface_context.config.width, surface_context.config.height));
                     }
                     let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture");
-                    surface_context.depth_texture.set_data(&surface_context.device, depth_texture);
+                    surface_context.depth_texture.replace_data(&surface_context.device, depth_texture);
                     surface_context.surface.configure(&surface_context.device, &surface_context.config);
             }
             }
@@ -353,11 +364,12 @@ pub trait WindowHandler {
     fn required_features() -> Features;
     fn mouse_moved(&mut self, surface_context: &dyn SurfaceCtx, mouse_pos: PhysicalPosition<f64>);
     fn mouse_motion(&mut self, surface_context: &dyn SurfaceCtx, mouse_delta: (f64, f64));
-    fn input_event(&mut self, surface_context: &dyn SurfaceCtx, input_event: &KeyEvent);
+    fn input_event(&mut self, surface_context: &dyn SurfaceCtx, input_event: &KeyEvent, current_modifiers: &Modifiers);
     fn touch(&mut self, surface_context: &dyn SurfaceCtx, touch: &Touch);
     fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, surface_context: &'c dyn SurfaceCtx, render_pass: & mut RenderPass<'b>, surface_texture: &'c UniformBinding<Texture>);
     fn other_window_event(&mut self, surface_context: &dyn SurfaceCtx, event: &WindowEvent);
     fn custom_shader_type_source() -> String;
+    fn resources() -> Option<&'static phf::Map<&'static str, ResourceType>>;
 }
 
 pub struct WindowConfig {

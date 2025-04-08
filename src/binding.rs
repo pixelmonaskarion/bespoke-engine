@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use bytemuck::bytes_of;
-use wgpu::{util::DeviceExt, BindGroup, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BufferUsages, Device};
+use wgpu::{util::DeviceExt, BindGroup, BindGroupLayout, BindGroupLayoutEntry, BindingResource, Buffer, BufferUsages, Device, Queue};
 
 use crate::shader::ShaderType;
 
 pub struct UniformBinding<B: Binding> {
-    // pub buffers: HashMap<u32, Buffer>,
+    pub buffers: HashMap<u32, Buffer>,
     pub layout: BindGroupLayout,
     pub binding: BindGroup,
     pub label: &'static str,
@@ -45,10 +45,10 @@ impl <B: Binding> UniformBinding<B> {
             entries: &B::layout(ty),
             label: Some(&format!("{label} Uniform Layout")),
         });
-        let binding = Self::create_bind_group(&value, label, &layout, device);
+        let (binding, buffers) = Self::create_bind_group(&value, label, &layout, device);
         let shader_type = B::shader_type();
         Self {
-            // buffers,
+            buffers,
             layout,
             binding,
             label,
@@ -57,7 +57,7 @@ impl <B: Binding> UniformBinding<B> {
         }
     }
 
-    pub fn create_bind_group(value: &B, label: &'static str, layout: &BindGroupLayout, device: &Device) -> BindGroup {
+    pub fn create_bind_group(value: &B, label: &'static str, layout: &BindGroupLayout, device: &Device) -> (BindGroup, HashMap<u32, Buffer>) {
         let mut buffers = HashMap::new();
         let resources = value.create_resources();
         let mut bind_group_entries = vec![];
@@ -67,7 +67,7 @@ impl <B: Binding> UniformBinding<B> {
                     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some(&format!("{} Buffer", label)),
                         contents: &bytes,
-                        usage: BufferUsages::UNIFORM | BufferUsages::VERTEX | BufferUsages::STORAGE,
+                        usage: BufferUsages::UNIFORM | BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
                     });
                     buffers.insert(i as u32, buffer);
                     // bind_group_entries.push(wgpu::BindGroupEntry {
@@ -95,7 +95,7 @@ impl <B: Binding> UniformBinding<B> {
             entries: &bind_group_entries,
             label: Some(&format!("{label} Binding")),
         });
-        binding
+        (binding, buffers)
     }
 
     // pub fn layout(label: &'static str, ty: Option<wgpu::BindingType>, device: &Device) -> BindGroupLayout {
@@ -113,10 +113,24 @@ impl <B: Binding> UniformBinding<B> {
     //         label: Some(&format!("{label} Uniform Layout")),
     //     })
     // }
-
-    pub fn set_data(&mut self, device: &Device, value: B) {
+    
+    pub fn set_data(&mut self, queue: &Queue, value: B) {
         self.value = value;
-        let mut buffers = HashMap::new();
+        let resources = self.value.create_resources();
+        for (i, resource) in resources.into_iter().enumerate() {
+            match resource {
+                Resource::Simple(bytes) => {
+                    if let Some(buffer) = self.buffers.get(&(i as u32)) {
+                        queue.write_buffer(buffer, 0, &bytes);
+                    }
+                }
+                Resource::Bespoke(_) => {}
+            }
+        }
+    }
+
+    pub fn replace_data(&mut self, device: &Device, value: B) {
+        self.value = value;
         let resources = self.value.create_resources();
         let mut bind_group_entries = vec![];
         for (i, resource) in resources.into_iter().enumerate() {
@@ -127,7 +141,7 @@ impl <B: Binding> UniformBinding<B> {
                         contents: &bytes,
                         usage: BufferUsages::UNIFORM | BufferUsages::VERTEX | BufferUsages::STORAGE,
                     });
-                    buffers.insert(i as u32, buffer);
+                    self.buffers.insert(i as u32, buffer);
                     // bind_group_entries.push(wgpu::BindGroupEntry {
                     //     binding: i as u32,
                     //     resource: binding,
@@ -141,7 +155,7 @@ impl <B: Binding> UniformBinding<B> {
                 }
             }
         }
-        for (i, buffer) in &buffers {
+        for (i, buffer) in &self.buffers {
             bind_group_entries.push(wgpu::BindGroupEntry {
                 binding: *i,
                 resource: buffer.as_entire_binding(),

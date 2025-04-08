@@ -4,7 +4,7 @@ use bytemuck::bytes_of;
 use cgmath::{Matrix4, SquareMatrix};
 use wgpu::{util::DeviceExt, Buffer, RenderPass};
 
-use crate::{binding::{Descriptor, UniformBinding}, camera::Camera, culling::{culled, CullingCompute}, model::{calculate_bounding_box, Model, Render, ToRaw}, surface_context::SurfaceCtx, texture::Texture, VertexTrait};
+use crate::{binding::{Descriptor, UniformBinding}, camera::Camera, culling::{culled, CullingCompute}, model::{calculate_bounding_box, Model, Render, ToRaw}, resource_loader::load_resource, surface_context::SurfaceCtx, texture::Texture, VertexTrait};
 
 pub struct Material {
     pub name: String,
@@ -96,7 +96,6 @@ impl MeshModel {
     pub fn load_model(
         name: Option<String>,
         source_path: &Path,
-        load_resource: impl Fn(&str) -> Option<&&[u8]>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
@@ -120,7 +119,7 @@ impl MeshModel {
     let mut materials = Vec::new();
     for m in obj_materials? {
         if let Some(diffuse_texture) = &m.diffuse_texture {
-            let diffuse_texture = load_texture(source_path.parent().unwrap().join(diffuse_texture).as_os_str().to_str().unwrap(), &load_resource, device, queue)?;
+            let diffuse_texture = load_texture(source_path.parent().unwrap().join(diffuse_texture).as_os_str().to_str().unwrap(), device, queue)?;
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout,
                 entries: &[
@@ -194,7 +193,6 @@ impl MeshModel {
     
 pub fn load_texture(
     file_name: &str,
-    load_resource: impl Fn(&str) -> Option<&&[u8]>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> anyhow::Result<Texture> {

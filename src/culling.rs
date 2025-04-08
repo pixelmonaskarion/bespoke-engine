@@ -70,8 +70,8 @@ impl CullingCompute {
                 resource: output_buffer.as_entire_binding(),
             }]
         });
-        self.bounding_box_uniform.set_data(device, *bounding_box);
-        self.num_instances_uniform.set_data(device, num_instances);
+        self.bounding_box_uniform.set_data(queue, *bounding_box);
+        self.num_instances_uniform.set_data(queue, num_instances);
         let output_i_buffer = ComputeOutput::new(4, device);
         let groups = [65535, num_instances / 65535 + 1, 1];
         self.shader.run_once(vec![&buffer_binding, &output_i_buffer.binding, &camera.binding, &self.num_instances_uniform.binding, &self.bounding_box_uniform.binding], groups, device, queue);
@@ -110,6 +110,12 @@ fn multiply_vec3f(x: Vector3<f32>, y: Vector3<f32>) -> Vector3<f32> {
 #[repr(C)]
 pub struct AABB {
     pub dimensions: [f32; 3],
+}
+
+impl AABB {
+    pub fn zero() -> Self {
+        AABB { dimensions: [0.; 3] }
+    }
 }
 
 impl WgslType for AABB {

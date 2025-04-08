@@ -64,6 +64,25 @@ impl Model {
         }
     }
 
+    pub fn new_empty<I: IndexFormatType + bytemuck::Pod>(bounding_box: AABB, device: & dyn DeviceExt) -> Self {
+        let [vertex_buffer, index_buffer] = Self::buffers(
+            &[], 
+            &[], 
+            device);
+        let num_indices = 0;
+        let num_vertices = 0;
+        Model {
+            vertex_buffer,
+            index_buffer,
+            instance_buffer: None,
+            num_indices,
+            num_vertices,
+            num_instances: 1,
+            index_format: I::get_index_format(),
+            bounding_box,
+        }
+    }
+
     pub fn new_buffers(vertex_buffer: Buffer, num_vertices: u32, instances: Vec<impl ToRaw>, index_buffer: Buffer, num_indices: u32, index_format: IndexFormat, bounding_box: AABB, device: & dyn DeviceExt) -> Self {
         let instance_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
@@ -148,6 +167,7 @@ impl IndexFormatType for u16 {
 
 impl Render for Model {
     fn render<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>) {
+        if self.num_indices == 0 { return; }
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         if let Some(instance_buffer) = &self.instance_buffer {
             render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
@@ -157,12 +177,14 @@ impl Render for Model {
     }
     
     fn render_culled_transformed<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instance_transform: Option<Matrix4<f32>>, camera: &Camera) {
+        if self.num_indices == 0 { return; }
         if !culled(self, instance_transform.unwrap_or(Matrix4::identity()), camera) {
             self.render(render_pass);
         }
     }
 
     fn render_culled<'a: 'b, 'b>(&'a self, camera: &UniformBinding<Camera>, render_pass: &mut RenderPass<'b>, culling: &mut CullingCompute, surface_ctx: &dyn SurfaceCtx) {
+        if self.num_indices == 0 { return; }
         if let Some(instance_buffer) = &self.instance_buffer {
             let (culled_instances, num_instances) = culling.run(&instance_buffer, self.num_instances, &self.bounding_box, camera, surface_ctx.device(), surface_ctx.queue());
             self.render_instances(render_pass, &culled_instances, 0..num_instances);
@@ -172,6 +194,7 @@ impl Render for Model {
     }
     
     fn render_instances<'a: 'b, 'b>(&'a self, render_pass: &mut RenderPass<'b>, instances: &Buffer, range: Range<u32>) {
+        if self.num_indices == 0 { return; }
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_vertex_buffer(1, instances.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
