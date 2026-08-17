@@ -10,8 +10,8 @@ pub struct SurfaceContext<'a> {
     pub config: SurfaceConfiguration,
     // pub depth_texture: Texture,
     pub depth_texture: UniformBinding<DepthTexture>,
-    pub device: Device,
-    pub queue: Queue,
+    pub device: Arc<Device>,
+    pub queue: Arc<Queue>,
     pub screen_model: Model,
     pub texture_renderer_shader: Shader<'a>,
     pub window_id: WindowId,
@@ -20,7 +20,7 @@ pub struct SurfaceContext<'a> {
 }
 
 impl SurfaceCtx for SurfaceContext<'_> {
-    fn surface(&self) -> &wgpu::Surface {
+    fn surface(&self) -> &wgpu::Surface<'_> {
         &self.surface
     }
 
@@ -40,11 +40,19 @@ impl SurfaceCtx for SurfaceContext<'_> {
         &self.queue
     }
 
+    fn device_arc(&self) -> Arc<Device> {
+        self.device.clone()
+    }
+
+    fn queue_arc(&self) -> Arc<Queue> {
+        self.queue.clone()
+    }
+
     fn screen_model(&self) -> &Model {
         &self.screen_model
     }
 
-    fn texture_renderer_shader(&self) -> &Shader {
+    fn texture_renderer_shader(&self) -> &Shader<'_> {
         &self.texture_renderer_shader
     }
 
@@ -62,13 +70,15 @@ impl SurfaceCtx for SurfaceContext<'_> {
 } 
 
 pub trait SurfaceCtx {
-    fn surface(&self) -> &wgpu::Surface;
+    fn surface(&'_ self) -> &'_ wgpu::Surface<'_>;
     fn config(&self) -> &SurfaceConfiguration;
     fn depth_texture(&self) -> &UniformBinding<DepthTexture>;
     fn device(&self) -> &Device;
     fn queue(&self) -> &Queue;
+    fn device_arc(&self) -> Arc<Device>;
+    fn queue_arc(&self) -> Arc<Queue>;
     fn screen_model(&self) -> &Model;
-    fn texture_renderer_shader(&self) -> &Shader;
+    fn texture_renderer_shader(&self) -> &Shader<'_>;
     fn window_id(&self) -> &WindowId;
     fn size(&self) -> (u32, u32);
     fn window(&self) -> &Window;

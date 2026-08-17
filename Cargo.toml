@@ -6,26 +6,27 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.97"
-bytemuck = { version = "1.22.0", features=["derive"] }
+anyhow = "1.0.104"
+bytemuck = { version = "1.25.2", features=["derive"] }
 cgmath = "0.18.0"
-image = "0.25.6"
-resource = "0.6.0"
-log = "0.4.27"
-pollster = "0.4.0"
-tobj = { version = "4.0.3", features=["async"] }
-wgpu = "24.0.3"
-phf = { version = "0.11.3", default-features = false }
-phf_codegen = "0.11.3"
+image = "0.25.10"
+resource = "0.6.1"
+log = "0.4.33"
+pollster = "1.0.1"
+tobj = { version = "4.0.5", features=["async"] }
+wgpu = { version = "30.0.0", features=["serde"] }
+phf = { version = "0.14.0", default-features = false }
+phf_codegen = "0.14.0"
 pathdiff = "0.2.3"
 load_file = "1.0.1"
+serde_json = "1.0.151"
 
 [build-dependencies]
-phf = { version = "0.11.3", default-features = false }
-phf_codegen = "0.11.3"
+phf = { version = "0.14.0", default-features = false }
+phf_codegen = "0.14.0"
 
 [target.'cfg(target_os = "android")'.dependencies]
-winit = { version = "0.30.9", features = ["android-game-activity"] }
+winit = { version = "0.30.13", features = ["android-game-activity"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-winit = "0.30.9"
+winit = "0.30.13"

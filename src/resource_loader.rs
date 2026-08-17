@@ -42,9 +42,9 @@ pub fn generate_resources(res_dir: &Path, dynamic: bool) {
                     let src_relative_path = pathdiff::diff_paths(path_string.clone(), &workspace_dir().as_path().join("src")).unwrap().as_os_str().to_str().unwrap().to_string();
                     // let out_relative_path = pathdiff::diff_paths(path_string, env::var("OUT_DIR").unwrap()).unwrap().as_os_str().to_str().unwrap().to_string();
                     if dynamic {
-                        resources.entry(src_relative_path.clone().replace("\\", "/"), &format!("bespoke_engine::resource_loader::ResourceType::Dynamic(\"{path_string}\")"));
+                        resources.entry(src_relative_path.clone().replace("\\", "/"), format!("bespoke_engine::resource_loader::ResourceType::Dynamic(\"{path_string}\")"));
                     } else {
-                        resources.entry(src_relative_path.clone().replace("\\", "/"), &format!("bespoke_engine::resource_loader::ResourceType::Static(include_bytes!(r#\"{path_string}\")\"#)"));
+                        resources.entry(src_relative_path.clone().replace("\\", "/"), format!("bespoke_engine::resource_loader::ResourceType::Static(include_bytes!(r#\"{path_string}\"#))"));
                     }
                 }
             }
@@ -88,7 +88,7 @@ fn buildin_resource(resources: &mut Map<String>, path: &str, bytes: &[u8]) {
     let prefix = path_buf.parent().unwrap();
     std::fs::create_dir_all(prefix).unwrap();
     File::create(&path_buf).unwrap().write(bytes).unwrap();
-    resources.entry(path.into(), &format!("bespoke_engine::resource_loader::ResourceType::Static(include_bytes!(r#\"{path_string}\"#))"));
+    resources.entry(path.into(), format!("bespoke_engine::resource_loader::ResourceType::Static(include_bytes!(r#\"{path_string}\"#))"));
 }
 
 fn workspace_dir() -> PathBuf {
@@ -103,6 +103,7 @@ fn workspace_dir() -> PathBuf {
     cargo_path.parent().unwrap().to_path_buf()
 }
 
+#[derive(Debug)]
 pub enum ResourceType {
     Static(&'static [u8]),
     Dynamic(&'static str),

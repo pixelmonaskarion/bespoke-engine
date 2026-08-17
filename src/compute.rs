@@ -1,13 +1,14 @@
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, Buffer, CommandEncoder, ComputePipeline, Device, PipelineCompilationOptions, Queue};
+use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, Buffer, ComputePipeline, Device, PipelineCompilationOptions, Queue};
 
 use crate::shader::{parse_shader, ShaderType};
 
+#[derive(Clone)]
 pub struct ComputeShader {
     pub pipeline: ComputePipeline,
 }
 
 impl ComputeShader {
-    pub fn new(source: &str, bindings: &[&wgpu::BindGroupLayout], shader_types: Vec<&ShaderType>, device: &Device) -> Self {
+    pub fn new(source: &str, bindings: Vec<&wgpu::BindGroupLayout>, shader_types: Vec<&ShaderType>, device: &Device) -> Self {
         let parsed_source = parse_shader(source, &shader_types.clone().into_iter().map(|it| it.clone()).collect());
         let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
@@ -15,8 +16,8 @@ impl ComputeShader {
         });
         let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: bindings,
-            push_constant_ranges: &[],
+            bind_group_layouts: &bindings.into_iter().map(|it| Some(it)).collect::<Vec<_>>(),
+            immediate_size: 0,
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: None,
@@ -56,7 +57,7 @@ impl ComputeOutput {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let layout = 
@@ -105,27 +106,27 @@ impl ComputeOutput {
             .map_async(wgpu::MapMode::Read, |result| {
                 result.unwrap();
             });
-        device.poll(wgpu::Maintain::Wait);
-        let bytes = map_buffer.slice(..).get_mapped_range().to_vec();
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let bytes = map_buffer.slice(..).get_mapped_range().unwrap().to_vec();
         map_buffer.unmap();
         bytes
     }
-    pub fn read_encoder(self, encoder: &mut CommandEncoder, device: &Device) -> Vec<u8> {
-        let map_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Compute Output Map Buffer"),
-            size: self.buffer.size(),
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map_buffer, 0, self.buffer.size());
-        map_buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, |result| {
-                result.unwrap();
-            });
-        device.poll(wgpu::Maintain::Wait);
-        let bytes = map_buffer.slice(..).get_mapped_range().to_vec();
-        map_buffer.unmap();
-        bytes
-    }
+    // pub fn read_encoder(self, encoder: &mut CommandEncoder, device: &Device) -> Vec<u8> {
+    //     let map_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    //         label: Some("Compute Output Map Buffer"),
+    //         size: self.buffer.size(),
+    //         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+    //         mapped_at_creation: false,
+    //     });
+    //     encoder.copy_buffer_to_buffer(&self.buffer, 0, &map_buffer, 0, self.buffer.size());
+    //     map_buffer
+    //         .slice(..)
+    //         .map_async(wgpu::MapMode::Read, |result| {
+    //             result.unwrap();
+    //         });
+    //     device.poll(wgpu::Maintain::Wait);
+    //     let bytes = map_buffer.slice(..).get_mapped_range().to_vec();
+    //     map_buffer.unmap();
+    //     bytes
+    // }
 }

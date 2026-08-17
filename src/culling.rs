@@ -42,7 +42,7 @@ impl CullingCompute {
         let output_i_buffer = ComputeOutput::new(4, device);
         let num_instances_uniform = UniformBinding::new(device, "Num Instances", 0, None);
         let bounding_box_uniform = UniformBinding::new(device, "Num Instances", AABB { dimensions: [0.0; 3] }, None);
-        let shader = ComputeShader::new(&format!("{instance_struct_definition}\n{}", include_str!("culling.wgsl")).replace("***INSTANCE_MATRIX***", instance_matrix_identifier), &[&buffers_layout, &output_i_buffer.layout, &create_layout::<Camera>(device), &create_layout::<u32>(device), &bounding_box_uniform.layout], vec![&ShaderType::multi_buffer_type(vec![false, true], vec!["Instance".into(); 2]), &u32::shader_type(), &Camera::shader_type(), &u32::shader_type(), &bounding_box_uniform.shader_type], device);
+        let shader = ComputeShader::new(&format!("{instance_struct_definition}\n{}", include_str!("culling.wgsl")).replace("***INSTANCE_MATRIX***", instance_matrix_identifier), vec![&buffers_layout, &output_i_buffer.layout, &create_layout::<Camera>((), device), &create_layout::<u32>((), device), &bounding_box_uniform.layout], vec![&ShaderType::multi_buffer_type(vec![false, true], vec!["Instance".into(); 2]), &u32::shader_type(()), &Camera::shader_type(()), &u32::shader_type(()), &bounding_box_uniform.shader_type], device);
         Self {
             shader,
             buffers_layout,

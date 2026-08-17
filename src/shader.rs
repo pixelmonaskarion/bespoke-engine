@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use wgpu::{BindGroupLayout, Device, FrontFace, PipelineCompilationOptions, PipelineLayout, RenderPass, RenderPipeline, ShaderModule, TextureFormat};
 
-use crate::{binding::{Descriptor, Uniform}, resource_loader::load_resource_string, texture::DepthTexture, window::BasicVertex};
+use crate::{binding::{Descriptor, Uniform}, resource_loader::load_resource_string, texture::DepthTexture, window::{BasicVertex, MULTISAMPLE_COUNT}};
 
 pub static CUSTOM_SHADER_TYPE_SOURCE: Mutex<String> = Mutex::new(String::new());
 
@@ -12,7 +12,7 @@ pub struct Shader<'a> {
     pub pipeline: RenderPipeline,
     pub resource_path: String,
     pub config: ShaderConfig,
-    pub vertex_buffers: Vec<wgpu::VertexBufferLayout<'a>>,
+    pub vertex_buffers: Vec<Option<wgpu::VertexBufferLayout<'a>>>,
     pub shader_types: Vec<ShaderType>,
     pub formats: Vec<TextureFormat>,
 }
@@ -22,6 +22,7 @@ impl <'a> Shader<'a> {
         let source = &load_resource_string(resource_path);
         let shader_types_owned = shader_types.clone().into_iter().map(|it| it.clone()).collect();
         let parsed_source = parse_shader(source, &shader_types_owned);
+        let vertex_buffers = vertex_buffers.into_iter().map(|it| Some(it)).collect::<Vec<_>>();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(parsed_source.clone().into()),
@@ -46,8 +47,8 @@ impl <'a> Shader<'a> {
         let layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &bindings,
-                push_constant_ranges: &[],
+                immediate_size: 0,
+                bind_group_layouts: &bindings.into_iter().map(|it| Some(it)).collect::<Vec<_>>(),
             });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -74,13 +75,13 @@ impl <'a> Shader<'a> {
                 conservative: false,
             },
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: config.multisample_count,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
             // If the pipeline will be used with a multiview render pass, this
             // indicates how many array layers the attachments will have.
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -144,13 +145,13 @@ impl <'a> Shader<'a> {
                 conservative: false,
             },
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: self.config.multisample_count,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
             // If the pipeline will be used with a multiview render pass, this
             // indicates how many array layers the attachments will have.
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         self.pipeline = pipeline;
@@ -171,8 +172,8 @@ impl <'a> Shader<'a> {
         let layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &bindings,
-                push_constant_ranges: &[],
+                bind_group_layouts: &bindings.into_iter().map(|it| Some(it)).collect::<Vec<_>>(),
+                immediate_size: 0,
             });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -180,7 +181,7 @@ impl <'a> Shader<'a> {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[BasicVertex::desc()],
+                buffers: &[Some(BasicVertex::desc())],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             // depth_stencil: Some(wgpu::DepthStencilState {
@@ -221,7 +222,7 @@ impl <'a> Shader<'a> {
             },
             // If the pipeline will be used with a multiview render pass, this
             // indicates how many array layers the attachments will have.
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -230,7 +231,7 @@ impl <'a> Shader<'a> {
             pipeline,
             resource_path: resource_path.into(),
             config: ShaderConfig { enable_depth_texture: false, ..Default::default() },
-            vertex_buffers: vec![BasicVertex::desc()],
+            vertex_buffers: vec![Some(BasicVertex::desc())],
             shader_types: shader_types_owned,
             formats: vec![format],
         }
@@ -252,15 +253,16 @@ pub struct ShaderConfig {
     pub depth_only: bool,
     pub face_cull: Option<FrontFace>,
     pub depth_compare: wgpu::CompareFunction,
+    pub multisample_count: u32,
 }
 
 impl ShaderConfig {
-    fn depth_stencil(&self) -> Option<wgpu::DepthStencilState> {
+    pub fn depth_stencil(&self) -> Option<wgpu::DepthStencilState> {
         if self.enable_depth_texture {
             return Some(wgpu::DepthStencilState {
                 format: DepthTexture::DEPTH_FORMAT,
-                depth_write_enabled: self.background,
-                depth_compare: self.depth_compare,
+                depth_write_enabled: Some(self.background),
+                depth_compare: Some(self.depth_compare),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             });
@@ -271,7 +273,7 @@ impl ShaderConfig {
 
 impl Default for ShaderConfig {
     fn default() -> Self {
-        Self { background: true, line_mode: wgpu::PolygonMode::Fill, enable_depth_texture: true, depth_only: false, face_cull: Some(FrontFace::Ccw), depth_compare: wgpu::CompareFunction::Less }
+        Self { background: true, line_mode: wgpu::PolygonMode::Fill, enable_depth_texture: true, depth_only: false, face_cull: Some(FrontFace::Ccw), depth_compare: wgpu::CompareFunction::Less, multisample_count: MULTISAMPLE_COUNT.lock().unwrap().clone() }
     }
 }
 
@@ -312,7 +314,6 @@ pub fn parse_shader(shader_source: &str, binding_types: &Vec<ShaderType>) -> Str
             }
         }
     }
-    println!("{parsed}");
     parsed
 }
 
@@ -320,6 +321,12 @@ pub fn parse_shader(shader_source: &str, binding_types: &Vec<ShaderType>) -> Str
 pub struct ShaderType {
     pub var_types: Vec<String>,
     pub wgsl_types: Vec<String>,
+}
+
+impl Default for ShaderType {
+    fn default() -> Self {
+        Self { var_types: vec![], wgsl_types: vec![] }
+    }
 }
 
 impl ShaderType {

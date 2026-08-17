@@ -60,7 +60,7 @@ impl Render for Billboard {
         }
     }
 
-    fn render_culled<'a: 'b, 'b>(&'a self, camera: &crate::binding::UniformBinding<crate::camera::Camera>, render_pass: &mut wgpu::RenderPass<'b>, culling: &mut crate::culling::CullingCompute, surface_ctx: &dyn crate::surface_context::SurfaceCtx) {
+    fn render_culled<'a: 'b, 'b>(&'a self, _camera: &crate::binding::UniformBinding<crate::camera::Camera>, _render_pass: &mut wgpu::RenderPass<'b>, _culling: &mut crate::culling::CullingCompute, _surface_ctx: &dyn crate::surface_context::SurfaceCtx) {
         todo!()
     }
 }

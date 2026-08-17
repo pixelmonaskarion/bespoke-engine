@@ -1,23 +1,26 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use bytemuck::{bytes_of, NoUninit};
 use cgmath::Vector2;
-use wgpu::{Backends, Device, Features, InstanceDescriptor, Limits, RenderPass};
+use wgpu::TextureViewDimension::D2;
+use wgpu::{Device, Features, InstanceDescriptor, Limits, RenderPass};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{DeviceEvent, ElementState, KeyEvent, Modifiers, Touch, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, KeyEvent, Modifiers, MouseButton, Touch, WindowEvent};
 use winit::keyboard::{KeyCode, ModifiersKeyState, PhysicalKey};
 use winit::window::{Window, WindowId};
 use winit::event_loop::ActiveEventLoop;
 
-use crate::binding::{bind_resources, create_layout, Binding, Descriptor, UniformBinding};
+use crate::binding::{Binding, Descriptor, UniformBinding, bind_resources, create_layout};
 use crate::culling::AABB;
 use crate::model::{Model, Render, ToRaw};
 use crate::resource_loader::{ResourceType, GLOBAL_PROJECT_RESOURCES};
 use crate::shader::{Shader, ShaderConfig, CUSTOM_SHADER_TYPE_SOURCE};
 use crate::surface_context::{SurfaceContext, SurfaceCtx};
-use crate::texture::{DepthTexture, Texture};
+use crate::texture::{DepthTexture, Texture, TextureLayoutConfig};
+
+pub static MULTISAMPLE_COUNT: Mutex<u32> = Mutex::new(1);
 
 pub struct Surface<'b: 'a, 'a, H: WindowHandler> {
     pub instance: wgpu::Instance,
@@ -31,10 +34,7 @@ pub struct Surface<'b: 'a, 'a, H: WindowHandler> {
 
 impl <'b: 'a, 'a, H: WindowHandler> Surface<'b, 'a, H> {
     pub async fn new(ready: &'b dyn Fn(&dyn SurfaceCtx) -> H) -> Self {
-        let instance = wgpu::Instance::new(&InstanceDescriptor { 
-            backends: Backends::all(),
-            ..Default::default()
-        });
+        let instance = wgpu::Instance::new(InstanceDescriptor::new_without_display_handle());
         *GLOBAL_PROJECT_RESOURCES.lock().unwrap() = H::resources();
         *CUSTOM_SHADER_TYPE_SOURCE.lock().unwrap() = H::custom_shader_type_source();
         return Self {
@@ -52,7 +52,8 @@ impl <'b: 'a, 'a, H: WindowHandler> Surface<'b, 'a, H> {
 
 impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let surface_config = FullSurfaceConfig::load_defaults(H::surface_config());
+        let surface_config = H::surface_config();
+        *MULTISAMPLE_COUNT.lock().unwrap() = surface_config.multisample_count;
         let window = Arc::new(event_loop.create_window(Window::default_attributes()).unwrap());
         let size = window.inner_size();
         if let Some((surface, adapter, device, queue)) = pollster::block_on(async {
@@ -62,9 +63,9 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
             let surface = self.instance.create_surface(window.clone()).unwrap();
             let adapter = self.instance.request_adapter(
                 &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::default(),
                     compatible_surface: Some(&surface),
                     force_fallback_adapter: false,
+                    ..Default::default()
                 },
             ).await.unwrap();
             let (device, queue) = adapter.request_device(
@@ -73,8 +74,8 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                     required_limits: H::limits(),
                     label: None,
                     memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    ..Default::default()
                 },
-                None,
             ).await.unwrap();
             return Some((surface, adapter, device, queue));
         }) {
@@ -83,9 +84,9 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                 config.format = format;
             }
             surface.configure(&device, &config);
-            let depth_texture = DepthTexture::create_depth_texture(&device, config.width, config.height, "Depth Texture");
+            let depth_texture = DepthTexture::create_depth_texture(&device, config.width, config.height, "Depth Texture", MULTISAMPLE_COUNT.lock().unwrap().clone());
             let depth_texture_binding = UniformBinding::new(&device, "Depth Texture", depth_texture, None);
-            let texture_renderer_shader = Shader::new("buildins/screen_renderer.wgsl", &device, vec![config.format], vec![&create_layout::<Texture>(&device)], vec![&Texture::shader_type()], vec![BasicVertex::desc()], ShaderConfig::default());
+            let texture_renderer_shader = Shader::new("buildins/screen_renderer.wgsl", &device, vec![config.format], vec![&create_layout::<Texture>(TextureLayoutConfig {dimensions: D2, sample_count: 1 },  &device)], vec![&Texture::shader_type(TextureLayoutConfig {dimensions: D2, sample_count: 1 })], vec![BasicVertex::desc()], ShaderConfig::default());
             let screen_model = BasicVertex::one_face(&device);
             let surface_context = SurfaceContext {
                 window_id: window.id(),
@@ -95,8 +96,8 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                 config,
                 texture_renderer_shader,
                 depth_texture: depth_texture_binding,
-                device,
-                queue,
+                device: Arc::new(device),
+                queue: Arc::new(queue),
                 screen_model,
             };
             self.surface_context = Some(surface_context);
@@ -145,7 +146,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                     },
                 ..
             } => {
-                if self.current_modifiers.lsuper_state() == ModifiersKeyState::Pressed {
+                if self.current_modifiers.lcontrol_state() == ModifiersKeyState::Pressed {
                     event_loop.exit();
                 }
             }
@@ -153,6 +154,13 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                 if let Some(surface_context) = &self.surface_context {
                     if let Some(handler) = &mut self.handler {
                         handler.input_event(surface_context, &event, &self.current_modifiers);
+                    }
+                }
+            }
+            WindowEvent::MouseInput { device_id: _, state, button } => {
+                if let Some(surface_context) = &self.surface_context {
+                    if let Some(handler) = &mut self.handler {
+                        handler.mouse_input(surface_context, state, button);
                     }
                 }
             }
@@ -181,7 +189,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                         handler.resize(surface_context, Vector2::new(surface_context.config.width, surface_context.config.height));
                     }
                     surface_context.surface.configure(&surface_context.device, &surface_context.config);
-                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture");
+                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture", MULTISAMPLE_COUNT.lock().unwrap().clone());
                     surface_context.depth_texture.replace_data(&surface_context.device, depth_texture);
                 }
             }
@@ -192,18 +200,37 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                     if let Some(handler) = &mut self.handler {
                         handler.resize(surface_context, Vector2::new(surface_context.config.width, surface_context.config.height));
                     }
-                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture");
+                    let depth_texture = DepthTexture::create_depth_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, "Depth Texture", MULTISAMPLE_COUNT.lock().unwrap().clone());
                     surface_context.depth_texture.replace_data(&surface_context.device, depth_texture);
                     surface_context.surface.configure(&surface_context.device, &surface_context.config);
             }
             }
             WindowEvent::RedrawRequested if self.surface_context.as_ref().map(|ctx| ctx.window_id) == Some(window_id) => {
                 if let Some(surface_context) = &self.surface_context {
-                    let delta = SystemTime::now().duration_since(self.last_time).unwrap_or(Duration::from_millis(0)).as_nanos() as f64 / 1000000.0;
+                    let delta = SystemTime::now().duration_since(self.last_time).unwrap_or(Duration::from_millis(0));
                     self.last_time = SystemTime::now();
-                    let temp_texture = Texture::blank_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, surface_context.config.format);
+                    if let Some(handler) = &mut self.handler {
+                        handler.update(surface_context, delta);
+                    }
+                    let multisample_texture = if MULTISAMPLE_COUNT.lock().unwrap().clone() > 1 {
+                        Some(Texture::blank_texture(surface_context.device(), surface_context.config.width, surface_context.config.height, surface_context.config.format, MULTISAMPLE_COUNT.lock().unwrap().clone()))
+                    } else {
+                        None
+                    };
+                    let temp_texture = Texture::blank_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, surface_context.config.format, 1);
                     let temp_texture_binding = UniformBinding::new(&surface_context.device, "Temp Texture", temp_texture, None);
-                    let output = surface_context.surface.get_current_texture().unwrap();
+                    let output_result = surface_context.surface.get_current_texture();
+                    let output = match output_result {
+                        wgpu::CurrentSurfaceTexture::Success(texture) => texture,
+                        wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+                            //TODO: reconfigure surface
+                            texture
+                        },
+                        wgpu::CurrentSurfaceTexture::Occluded => {
+                            return
+                        },
+                        _ => { panic!("bad texture output {output_result:?}") }
+                    };
                     let view = output
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -217,13 +244,15 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("Temp Render Pass"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &temp_texture_binding.value.view,
-                                resolve_target: None,
+                                resolve_target: multisample_texture.as_ref().map(|_| &temp_texture_binding.value.view),
+                                view: multisample_texture.as_ref().map(|it| &it.view).unwrap_or(&temp_texture_binding.value.view),
+                                depth_slice: None,
                                 ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(FullWindowConfig::load_defaults(self.handler.as_ref().map(|handler| handler.config()).flatten()).background_color),
+                                    load: wgpu::LoadOp::Clear(self.handler.as_ref().map(|handler| handler.config()).unwrap_or_default().background_color),
                                     store: wgpu::StoreOp::Store,
                                 },
                             })],
+                            multiview_mask: None,
                             timestamp_writes: None,
                             occlusion_query_set: None,
                             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -236,24 +265,26 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                             }),
                         });
                         if let Some(handler) = &mut self.handler {
-                            handler.render(surface_context, &mut render_pass, delta);
+                            handler.render(surface_context, &mut render_pass);
                         }
                     }
                     
                     //create another temporary texture and use it to render post processing effects
-                    let post_process_texture = if FullWindowConfig::load_defaults(self.handler.as_ref().map(|handler| handler.config()).flatten()).enable_post_processing {
-                        let post_process_texture = Texture::blank_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, surface_context.config.format);
+                    let post_process_texture = if self.handler.as_ref().map(|handler| handler.config()).unwrap_or_default().enable_post_processing {
+                        let post_process_texture = Texture::blank_texture(&surface_context.device, surface_context.config.width, surface_context.config.height, surface_context.config.format, 1);
                         {
                             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                 label: Some("Post Processing Render Pass"),
                                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                     view: &post_process_texture.view,
                                     resolve_target: None,
+                                    depth_slice: None,
                                     ops: wgpu::Operations {
                                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                         store: wgpu::StoreOp::Store,
                                     },
                                 })],
+                                multiview_mask: None,
                                 timestamp_writes: None,
                                 occlusion_query_set: None,
                                 // depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -282,11 +313,13 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: &view,
                                 resolve_target: None,
+                                depth_slice: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                     store: wgpu::StoreOp::Store,
                                 },
                             })],
+                            multiview_mask: None,
                             timestamp_writes: None,
                             occlusion_query_set: None,
                             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -305,7 +338,7 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
                     }
                     surface_context.queue.submit([encoder.finish()]);
 
-                    output.present();
+                    surface_context.queue.present(output);
                 }
             }
             _ => {}
@@ -324,46 +357,17 @@ impl<'b: 'a, 'a, H: WindowHandler> ApplicationHandler for Surface<'b, 'a, H> {
         }
     }
 }
-
-pub fn render_texture(surface_context: &dyn SurfaceCtx, render: &dyn Fn(&mut RenderPass)) {
-    let render_texture = Texture::blank_texture(surface_context.device(), surface_context.config().width, surface_context.config().height, surface_context.config().format);
-    let mut encoder = surface_context.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    {
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Surface Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &render_texture.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &surface_context.depth_texture().value.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-        });
-        render(&mut render_pass);
-    }
-    surface_context.queue().submit([encoder.finish()]);
-}
-
 pub trait WindowHandler {
     fn resize(&mut self, surface_context: &dyn SurfaceCtx, new_size: Vector2<u32>);
-    fn render<'a: 'b, 'b>(&'a mut self, surface_context: &'a dyn SurfaceCtx, render_pass: & mut RenderPass<'b>, delta: f64);
-    fn config(&self) -> Option<WindowConfig>;
-    fn surface_config() -> Option<SurfaceConfig>;
+    fn update(&mut self, surface_context: &dyn SurfaceCtx, delta_time: Duration);
+    fn render<'a: 'b, 'b>(&'a mut self, surface_context: &'a dyn SurfaceCtx, render_pass: & mut RenderPass<'b>);
+    fn config(&self) -> WindowConfig;
+    fn surface_config() -> SurfaceConfig;
     fn limits() -> Limits;
     fn required_features() -> Features;
     fn mouse_moved(&mut self, surface_context: &dyn SurfaceCtx, mouse_pos: PhysicalPosition<f64>);
     fn mouse_motion(&mut self, surface_context: &dyn SurfaceCtx, mouse_delta: (f64, f64));
+    fn mouse_input(&mut self, surface_context: &dyn SurfaceCtx, element_state: &ElementState, mouse_button: &MouseButton);
     fn input_event(&mut self, surface_context: &dyn SurfaceCtx, input_event: &KeyEvent, current_modifiers: &Modifiers);
     fn touch(&mut self, surface_context: &dyn SurfaceCtx, touch: &Touch);
     fn post_process_render<'a: 'b, 'c: 'b, 'b>(&'a mut self, surface_context: &'c dyn SurfaceCtx, render_pass: & mut RenderPass<'b>, surface_texture: &'c UniformBinding<Texture>);
@@ -373,54 +377,34 @@ pub trait WindowHandler {
 }
 
 pub struct WindowConfig {
-    pub background_color: Option<wgpu::Color>,
-    pub enable_post_processing: Option<bool>,
-}
-
-struct FullWindowConfig {
-    background_color: wgpu::Color,
-    enable_post_processing: bool,
+    pub background_color: wgpu::Color,
+    pub enable_post_processing: bool,
+    pub multisample_count: u32,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self { background_color: None, enable_post_processing: None }
-    }
-}
-
-impl FullWindowConfig {
-    fn load_defaults(config: Option<WindowConfig>) -> Self {
-        Self {
-            background_color: config.as_ref().map(|c| c.background_color).flatten().unwrap_or(wgpu::Color {
+        Self { 
+            background_color: wgpu::Color {
                 r: 0.1,
                 g: 0.2,
                 b: 0.3,
                 a: 1.0,
-            }),
-            enable_post_processing: config.as_ref().map(|c| c.enable_post_processing).flatten().unwrap_or(false),
+            }, 
+            enable_post_processing: false,
+            multisample_count: 1,
         }
     }
 }
 
 pub struct SurfaceConfig {
     pub override_format: Option<wgpu::TextureFormat>,
+    pub multisample_count: u32,
 }
 
 impl Default for SurfaceConfig {
     fn default() -> Self {
-        Self { override_format: None }
-    }
-}
-
-struct FullSurfaceConfig {
-    override_format: Option<wgpu::TextureFormat>,
-}
-
-impl FullSurfaceConfig {
-    fn load_defaults(config: Option<SurfaceConfig>) -> Self {
-        Self {
-            override_format: config.as_ref().map(|c| c.override_format).flatten(),
-        }
+        Self { override_format: None, multisample_count: 4 }
     }
 }
 

@@ -1,11 +1,12 @@
 use std::ops::Range;
 
+use bytemuck::{cast_slice, Pod};
 use cgmath::{Matrix4, SquareMatrix};
 use wgpu::{util::DeviceExt, Buffer, IndexFormat, RenderPass};
 
 use crate::{binding::UniformBinding, camera::Camera, culling::{culled, CullingCompute, AABB}, surface_context::SurfaceCtx, VertexTrait};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Model {
     pub vertex_buffer: wgpu::Buffer,
     pub num_vertices: u32,
@@ -123,6 +124,17 @@ impl Model {
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Instance Buffer"),
                 contents: &instances.iter().map(|instance| instance.to_raw()).collect::<Vec<_>>().concat(),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            }
+        ));
+        self.num_instances = instances.len() as u32;
+    }
+
+    pub fn update_instances_raw<T: Pod>(&mut self, instances: &[T], device: & dyn DeviceExt) {
+        self.instance_buffer = Some(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Instance Buffer"),
+                contents: cast_slice(instances),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             }
         ));
